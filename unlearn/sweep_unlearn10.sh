@@ -26,7 +26,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 export BASE="${BASE:-EleutherAI/deep-ignorance-unfiltered}"
-export DEVICE="${DEVICE:-mps}"
+export DEVICE="${DEVICE:-auto}"
 export DTYPE="${DTYPE:-auto}"
 export EVAL_SPLIT=0.1
 export MAX_LENGTH=512
