@@ -1351,9 +1351,13 @@ def main():
         # Save model and exit early
         model_out_path = Path(args.outdir) / "pytorch_model.bin"
         model_out_path.parent.mkdir(parents=True, exist_ok=True)
-        if not args.no_save:
-            model.save_pretrained(args.outdir)
-            tokenizer.save_pretrained(args.outdir)
+
+        # Always save for evaluation, then clean up later if NO_SAVE
+        model.save_pretrained(args.outdir)
+        tokenizer.save_pretrained(args.outdir)
+        if args.no_save:
+            print(f"[unlearn] TAR model saved temporarily for evaluation (will be deleted after due to --no-save): {args.outdir}")
+        else:
             print(f"[unlearn] TAR model saved to: {args.outdir}")
 
         # Clear GPU memory before evaluation to avoid OOM
@@ -1362,9 +1366,28 @@ def main():
         if 'tokenizer' in locals():
             del tokenizer
         torch.cuda.empty_cache()
+        torch.cuda.synchronize()  # Wait for all GPU operations to complete
+        import gc; gc.collect()   # Python garbage collection
+
+        # Set PyTorch memory allocator to avoid fragmentation
+        import os
+        os.environ['PYTORCH_ALLOC_CONF'] = 'expandable_segments:True'
 
         # Run evaluation if needed
         run_evaluation_benchmarks(args.outdir, device, args.dtype, args.no_eval)
+
+        # Clean up weights if --no-save (same as main path)
+        if args.no_save:
+            import glob
+            print("\n[unlearn] Cleaning up TAR model weights (--no-save specified) to save disk space...")
+            for ext in ["*.safetensors", "*.safetensors.index.json", "*.bin", "*.bin.index.json", "*.pt"]:
+                for f in glob.glob(os.path.join(args.outdir, ext)):
+                    try:
+                        os.remove(f)
+                        print(f"[unlearn]   Deleted: {f}")
+                    except Exception as e:
+                        print(f"[unlearn]   Could not delete {f}: {e}")
+            print("[unlearn] Cleanup complete ✓")
 
         return
 
@@ -1498,6 +1521,12 @@ def main():
     if 'tokenizer' in locals():
         del tokenizer
     torch.cuda.empty_cache()
+    torch.cuda.synchronize()  # Wait for all GPU operations to complete
+    import gc; gc.collect()   # Python garbage collection
+
+    # Set PyTorch memory allocator to avoid fragmentation
+    import os
+    os.environ['PYTORCH_ALLOC_CONF'] = 'expandable_segments:True'
 
     run_evaluation_benchmarks(args.outdir, args.device, args.dtype, args.no_eval)
 
