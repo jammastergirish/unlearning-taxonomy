@@ -181,9 +181,10 @@ def nll_loss(model, batch: dict) -> torch.Tensor:
             print(f"  Batch shape: input_ids={batch['input_ids'].shape}")
 
             # This shouldn't happen if tokenization was done correctly
-            # Return a large loss to signal error but avoid CUDA crash
+            # Return a large loss that requires grad to avoid CUDA crash
             print("  CRITICAL: Returning dummy loss to avoid CUDA crash")
-            return torch.tensor(1e10, device=logits.device, dtype=logits.dtype)
+            dummy_loss = torch.tensor(1e10, device=logits.device, dtype=logits.dtype, requires_grad=True)
+            return dummy_loss
 
         # This path shouldn't be reached if above check works
         labels = torch.clamp(labels, 0, vocab_size - 1)
@@ -899,8 +900,10 @@ def apply_tar(model, forget_batches, alpha, lr, epochs, device, pt_dtype=None, a
     # Determine if we can use bf16
     if pt_dtype is None:
         pt_dtype = torch.float32  # Default to fp32 if not specified
-    use_bf16 = (pt_dtype == torch.bfloat16) and torch.cuda.is_available()
+    # TEMPORARY: Disable mixed precision for TAR to isolate corruption issues
+    use_bf16 = False  # (pt_dtype == torch.bfloat16) and torch.cuda.is_available()
     use_fp16 = False
+    print("[TAR] Mixed precision disabled to prevent token ID corruption")
 
     # Setup training arguments - match the main training loop's format
     training_args = TrainingArguments(
@@ -925,38 +928,31 @@ def apply_tar(model, forget_batches, alpha, lr, epochs, device, pt_dtype=None, a
         disable_tqdm=False,
     )
 
-    # For TAR, we need standard fine-tuning (not gradient ascent)
-    # So we'll use the standard HF Trainer, not UnlearningTrainer
-    from transformers import Trainer
+    # Use UnlearningTrainer for TAR - it handles device movement correctly
+    # TAR just needs standard fine-tuning, which is the opposite of ga_simple
+    # ga_simple does: return -nll_loss(forget_batch)  (gradient ascent)
+    # TAR needs:      return nll_loss(forget_batch)   (gradient descent)
+    # But ga_simple negates the loss, so we can't use it directly.
+    # Let's use wt_dist which just does standard fine-tuning on retain data
+    # but we'll pass forget data as both forget and retain
 
-    # Custom compute_loss for TAR - just standard NLL loss on forget data
-    class TARTrainer(Trainer):
-        def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
-            # Accept any extra kwargs that Trainer might pass (like num_items_in_batch)
-            # DEBUG: Print what we receive
-            print(f"[TAR DEBUG] inputs type: {type(inputs)}")
-            print(f"[TAR DEBUG] inputs keys: {inputs.keys() if isinstance(inputs, dict) else 'not a dict'}")
+    class TARArgs:
+        def __init__(self):
+            self.method = "wt_dist"  # wt_dist just does nll_loss on retain data
 
-            # UnlearningDataset returns dict with "forget" and "retain" keys
-            # For TAR, we only use the forget batch
-            if isinstance(inputs, dict) and "forget" in inputs:
-                forget_batch = inputs["forget"]  # Extract forget batch from dict
-                print(f"[TAR DEBUG] forget_batch type: {type(forget_batch)}")
-                print(f"[TAR DEBUG] forget_batch keys: {forget_batch.keys() if isinstance(forget_batch, dict) else 'not a dict'}")
-            else:
-                forget_batch = inputs  # Fallback if structure is different
-                print(f"[TAR DEBUG] using inputs directly as forget_batch")
+    tar_args = TARArgs()
 
-            # TAR does standard fine-tuning on forget data
-            loss = nll_loss(model, forget_batch)
-            return (loss, None) if return_outputs else loss
-
-    # Create trainer
-    trainer = TARTrainer(
+    # Create trainer using UnlearningTrainer for proper device handling
+    trainer = UnlearningTrainer(
         model=model,
         args=training_args,
         train_dataset=dataset,
         data_collator=UnlearningCollator(),
+        unlearn_args=tar_args,
+        ref_model=None,
+        random_targets=None,
+        retain_act_cache=None,
+        layer_ids=None,
     )
 
     # Train
