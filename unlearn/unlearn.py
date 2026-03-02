@@ -1352,6 +1352,13 @@ def main():
             tokenizer.save_pretrained(args.outdir)
             print(f"[unlearn] TAR model saved to: {args.outdir}")
 
+        # Clear GPU memory before evaluation to avoid OOM
+        print("[unlearn] Clearing GPU memory before evaluation...")
+        del model
+        if 'tokenizer' in locals():
+            del tokenizer
+        torch.cuda.empty_cache()
+
         # Run evaluation if needed
         run_evaluation_benchmarks(args.outdir, device, args.dtype, args.no_eval)
 
@@ -1480,6 +1487,14 @@ def main():
         print("[unlearn] Model saved ✓")
 
     # ---- Auto-evaluate the unlearned model ----
+    # Clear GPU memory before evaluation to avoid OOM
+    print("[unlearn] Clearing GPU memory before evaluation...")
+    if 'model' in locals():
+        del model
+    if 'tokenizer' in locals():
+        del tokenizer
+    torch.cuda.empty_cache()
+
     run_evaluation_benchmarks(args.outdir, args.device, args.dtype, args.no_eval)
 
     # ---- Upload to HuggingFace (only if --push-to-hub) ----
