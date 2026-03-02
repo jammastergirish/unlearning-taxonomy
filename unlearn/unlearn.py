@@ -900,10 +900,8 @@ def apply_tar(model, forget_batches, alpha, lr, epochs, device, pt_dtype=None, a
     # Determine if we can use bf16
     if pt_dtype is None:
         pt_dtype = torch.float32  # Default to fp32 if not specified
-    # TEMPORARY: Disable mixed precision for TAR to isolate corruption issues
-    use_bf16 = False  # (pt_dtype == torch.bfloat16) and torch.cuda.is_available()
+    use_bf16 = (pt_dtype == torch.bfloat16) and torch.cuda.is_available()
     use_fp16 = False
-    print("[TAR] Mixed precision disabled to prevent token ID corruption")
 
     # Setup training arguments - match the main training loop's format
     training_args = TrainingArguments(
