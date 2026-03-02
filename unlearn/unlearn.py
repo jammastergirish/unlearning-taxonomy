@@ -933,12 +933,19 @@ def apply_tar(model, forget_batches, alpha, lr, epochs, device, pt_dtype=None, a
     class TARTrainer(Trainer):
         def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
             # Accept any extra kwargs that Trainer might pass (like num_items_in_batch)
-            # UnlearningDataset returns (forget_batch, retain_batch) pairs
+            # DEBUG: Print what we receive
+            print(f"[TAR DEBUG] inputs type: {type(inputs)}")
+            print(f"[TAR DEBUG] inputs keys: {inputs.keys() if isinstance(inputs, dict) else 'not a dict'}")
+
+            # UnlearningDataset returns dict with "forget" and "retain" keys
             # For TAR, we only use the forget batch
-            if isinstance(inputs, tuple) or isinstance(inputs, list):
-                forget_batch = inputs[0]  # Extract forget batch from pair
+            if isinstance(inputs, dict) and "forget" in inputs:
+                forget_batch = inputs["forget"]  # Extract forget batch from dict
+                print(f"[TAR DEBUG] forget_batch type: {type(forget_batch)}")
+                print(f"[TAR DEBUG] forget_batch keys: {forget_batch.keys() if isinstance(forget_batch, dict) else 'not a dict'}")
             else:
                 forget_batch = inputs  # Fallback if structure is different
+                print(f"[TAR DEBUG] using inputs directly as forget_batch")
 
             # TAR does standard fine-tuning on forget data
             loss = nll_loss(model, forget_batch)
