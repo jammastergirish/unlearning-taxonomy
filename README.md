@@ -603,6 +603,37 @@ See `uv run unlearn/unlearn.py --help` for full argument reference.
 
 ---
 
+#### Stability & Gradient Explosion
+
+Some unlearning methods, particularly SimNPO and NPO, can suffer from gradient explosions during training due to numerical instability in their loss functions. This typically manifests as:
+
+- Loss spikes from ~3 to 10+ during early training steps
+- Gradient norms jumping from ~5 to 100-300+
+- Training becoming unstable and potentially corrupting the model
+
+**Root Cause:** SimNPO uses `logsigmoid(-beta * lp_forget)` where `lp_forget` can be large negative values (normal for language models). When `lp_forget ≈ -50`, the sigmoid argument becomes very positive, causing numerical issues.
+
+**Stability Fixes:**
+
+1. **Gradient Clipping:** Added `--grad-clip` parameter (default: 1.0, recommend: 0.5 for unstable methods)
+2. **Lower Beta Values:** Use `--beta 0.01` instead of `0.1` for SimNPO/NPO/DPO to stabilize the sigmoid
+3. **Conservative Learning Rates:** Use `3e-05` instead of `5e-05` for reference-free methods
+4. **Monitor Early:** Watch for loss spikes in the first 50 training steps and stop immediately if detected
+
+**Safe Hyperparameters for Unstable Methods:**
+
+```bash
+# SimNPO/NPO - stabilized
+EPOCHS=3 LR=3e-05 BETA=0.01 GRAD_CLIP=0.5 RETAIN_WEIGHT=1.0 ./unlearn/run_unlearn.sh simnpo
+
+# DPO - stabilized
+EPOCHS=3 LR=3e-05 BETA=0.01 GRAD_CLIP=0.5 ./unlearn/run_unlearn.sh dpo
+```
+
+> **Note:** NPO is inherently more stable than SimNPO because it uses a reference model as an anchor, but both benefit from the above fixes.
+
+---
+
 #### Algorithm Details
 
 ##### GA Simple — Pure Gradient Ascent
@@ -724,7 +755,7 @@ All methods use **full-parameter training** with AdamW + cosine annealing, manag
 | Epochs | 1 | `--epochs` |
 | Batch size | 4 | `--batch-size` |
 | Max sequence length | 512 | `--max-length` |
-| Gradient clipping | 1.0 | `--grad-clip` |
+| Gradient clipping | 1.0 (⚠️ 0.5 for unstable methods) | `--grad-clip` |
 | Gradient accumulation | 1 | `--grad-accum-steps` |
 | Eval split | 10% | `--eval-split` |
 
@@ -734,15 +765,17 @@ All methods use **full-parameter training** with AdamW + cosine annealing, manag
 |---|---|---|---|---|
 | `ga` | `--retain-weight` | 1.0 | ↑ to 2–10 | ↓ below 1.0 |
 | `grad_diff` | `--forget-weight` | 1.0 | ↓ to 0.1–0.5 | ↑ to 2–5 |
-| `dpo` | `--beta` | 0.1 | ↓ beta (gentler updates) | ↑ beta (sharper preference) |
-| `npo` | `--beta`, `--retain-weight` | 0.1, 1.0 | ↑ retain-weight or ↓ beta | ↑ beta or ↓ retain-weight |
-| `simnpo` | `--beta`, `--retain-weight` | 0.1, 1.0 | ↑ retain-weight or ↓ beta | ↑ beta or ↓ retain-weight |
+| `dpo` | `--beta` | 0.1 ⚠️ | ↓ beta (0.01) + ↓ lr (3e-05) | ↑ beta (but risk instability) |
+| `npo` | `--beta`, `--retain-weight` | 0.1 ⚠️, 1.0 | ↑ retain-weight or ↓ beta (0.01) | ↑ beta or ↓ retain-weight |
+| `simnpo` | `--beta`, `--retain-weight` | 0.1 ⚠️, 1.0 | ↑ retain-weight or ↓ beta (0.01) | ↑ beta or ↓ retain-weight |
 | `rmu` | `--alpha`, `--steering-coeff` | 100.0, 20.0 | ↑ alpha or ↓ steering-coeff | ↓ alpha or ↑ steering-coeff |
 | `cb` | `--alpha`, `--steering-coeff` | 100.0, 20.0 | ↑ alpha or ↓ steering-coeff | ↓ alpha or ↑ steering-coeff |
 | `lat` | `--lat-eps`, `--retain-weight` | 0.1, 1.0 | ↑ retain-weight or ↓ lat-eps | ↑ lat-eps or ↓ retain-weight |
 | `cb_lat` | `--alpha`, `--lat-eps` | 100.0, 0.1 | ↑ alpha or ↓ lat-eps | ↓ alpha or ↑ lat-eps |
 | `wt_dist` | `--wt-noise-std` | 0.02 | ↓ noise (less destruction) | ↑ noise (more disruption) |
 | `wt_dist_reg` | `--wt-reg-lambda` | 0.1 | ↓ lambda (less weight push) | ↑ lambda (more distance) |
+
+⚠️ **Gradient explosion risk:** Use `--grad-clip 0.5 --beta 0.01 --lr 3e-05` for stability
 
 > [!TIP]
 > **Preventing catastrophic collapse.** If MMLU drops well below the ~45% baseline, the two most effective levers are:

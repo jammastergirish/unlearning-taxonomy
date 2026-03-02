@@ -17,7 +17,7 @@
 #   LR, EPOCHS, BATCH_SIZE, MAX_LENGTH, BETA, ALPHA, STEERING_COEFF,
 #   LAYER_ID, FORGET_WEIGHT, RETAIN_WEIGHT, LAT_EPS, LAT_STEPS,
 #   TAR_ALPHA, TAR_LR, TAR_EPOCHS, WT_NOISE_STD, WT_REG_LAMBDA,
-#   GRAD_ACCUM_STEPS, EVAL_SPLIT, PUSH_TO_HUB, NO_SAVE, NO_EVAL
+#   GRAD_ACCUM_STEPS, GRAD_CLIP, EVAL_SPLIT, PUSH_TO_HUB, NO_SAVE, NO_EVAL
 #
 # For parallel multi-GPU sweeps, use parallel_sweep.sh instead of calling
 # this script directly from a sweep loop.
@@ -56,6 +56,7 @@ if uv run --script unlearn/unlearn.py \
   ${WT_NOISE_STD:+--wt-noise-std "$WT_NOISE_STD"} \
   ${WT_REG_LAMBDA:+--wt-reg-lambda "$WT_REG_LAMBDA"} \
   ${GRAD_ACCUM_STEPS:+--grad-accum-steps "$GRAD_ACCUM_STEPS"} \
+  ${GRAD_CLIP:+--grad-clip "$GRAD_CLIP"} \
   ${EVAL_SPLIT:+--eval-split "$EVAL_SPLIT"} \
   ${PUSH_TO_HUB:+--push-to-hub} \
   ${NO_SAVE:+--no-save} \
@@ -91,6 +92,7 @@ uv run --script unlearn/unlearn.py \
   ${WT_NOISE_STD:+--wt-noise-std "$WT_NOISE_STD"} \
   ${WT_REG_LAMBDA:+--wt-reg-lambda "$WT_REG_LAMBDA"} \
   ${GRAD_ACCUM_STEPS:+--grad-accum-steps "$GRAD_ACCUM_STEPS"} \
+  ${GRAD_CLIP:+--grad-clip "$GRAD_CLIP"} \
   ${EVAL_SPLIT:+--eval-split "$EVAL_SPLIT"} \
   ${PUSH_TO_HUB:+--push-to-hub} \
   ${NO_SAVE:+--no-save} \
