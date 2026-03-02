@@ -830,7 +830,11 @@ def apply_tar(model, forget_batches, alpha, lr, epochs, device):
     original_weights = {}
     for name, param in model.named_parameters():
         if param.requires_grad:
-            original_weights[name] = param.data.clone().cpu()
+            # Create empty CPU tensor with same shape and dtype, then copy
+            # This avoids allocating GPU memory for the clone
+            cpu_tensor = torch.empty(param.shape, dtype=param.dtype, device='cpu')
+            cpu_tensor.copy_(param.data, non_blocking=True)
+            original_weights[name] = cpu_tensor
 
     # Step 2: Fine-tune on forget data
     print(f"[TAR] Fine-tuning on forget data ({epochs} epochs, lr={lr})...")
