@@ -843,7 +843,7 @@ def wt_dist_reg_loss(
 # where θ_forget_ft is obtained by fine-tuning the base model on forget data.
 # This is a one-time operation, not iterative training.
 
-def apply_tar(model, forget_batches, alpha, lr, epochs, device, pt_dtype=torch.float32, args=None):
+def apply_tar(model, forget_batches, alpha, lr, epochs, device, pt_dtype=None, args=None):
     """
     Apply Task Arithmetic Removal to the model using HF Trainer for robustness.
 
@@ -896,6 +896,8 @@ def apply_tar(model, forget_batches, alpha, lr, epochs, device, pt_dtype=torch.f
     )
 
     # Determine if we can use bf16
+    if pt_dtype is None:
+        pt_dtype = torch.float32  # Default to fp32 if not specified
     use_bf16 = (pt_dtype == torch.bfloat16) and torch.cuda.is_available()
     use_fp16 = False
 
