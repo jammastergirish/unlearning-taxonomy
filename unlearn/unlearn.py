@@ -83,7 +83,8 @@ def tokenize_texts(
     later grouped into mini-batches by `make_batches()`.
     """
     batches = []
-    for text in texts:
+    vocab_size = len(tokenizer)
+    for i, text in enumerate(texts):
         # HuggingFace tokenizer returns {"input_ids": (1, T), "attention_mask": (1, T)}
         enc = tokenizer(
             text,
@@ -92,6 +93,18 @@ def tokenize_texts(
             truncation=True,
             padding="max_length",
         )
+
+        # Validate token IDs are within vocabulary range
+        input_ids = enc["input_ids"]
+        max_id = input_ids.max().item()
+        min_id = input_ids.min().item()
+
+        if max_id >= vocab_size or min_id < 0:
+            print(f"[WARNING] Invalid tokens in sample {i}: range [{min_id}, {max_id}], vocab_size={vocab_size}")
+            print(f"  Text preview: {text[:100]}...")
+            # Clip invalid tokens to valid range
+            enc["input_ids"] = torch.clamp(input_ids, 0, vocab_size - 1)
+
         # Move tensors to the target device (GPU/MPS/CPU)
         batches.append({k: v.to(device) for k, v in enc.items()})
     return batches
@@ -156,11 +169,23 @@ def nll_loss(model, batch: dict) -> torch.Tensor:
     min_label = labels.min().item()
 
     if max_label >= vocab_size or min_label < 0:
-        print(f"[ERROR] Vocabulary size mismatch detected:")
+        print(f"\n[ERROR] Vocabulary size mismatch detected in nll_loss:")
         print(f"  Model vocab size: {vocab_size}")
         print(f"  Label range: [{min_label}, {max_label}]")
-        print(f"  Invalid labels found - clipping to valid range [0, {vocab_size-1}]")
-        # Clip labels to valid vocabulary range
+
+        # Find specific problematic tokens
+        invalid_mask = (labels >= vocab_size) | (labels < 0)
+        if invalid_mask.any():
+            invalid_tokens = labels[invalid_mask].unique().tolist()[:10]  # Show first 10 unique invalid tokens
+            print(f"  Invalid token IDs: {invalid_tokens}")
+            print(f"  Batch shape: input_ids={batch['input_ids'].shape}")
+
+            # This shouldn't happen if tokenization was done correctly
+            # Return a large loss to signal error but avoid CUDA crash
+            print("  CRITICAL: Returning dummy loss to avoid CUDA crash")
+            return torch.tensor(1e10, device=logits.device, dtype=logits.dtype)
+
+        # This path shouldn't be reached if above check works
         labels = torch.clamp(labels, 0, vocab_size - 1)
 
     # Per-token cross-entropy, then mask out padding and average over real tokens
@@ -863,8 +888,29 @@ def apply_tar(model, forget_batches, alpha, lr, epochs, device):
     for epoch in range(epochs):
         epoch_loss = 0.0
         pbar = tqdm(forget_batches, desc=f"TAR forget-FT epoch {epoch+1}/{epochs}")
-        for batch in pbar:
+        for batch_idx, batch in enumerate(pbar):
+            # Validate data before moving to device
+            vocab_size = model.config.vocab_size
+            input_ids = batch["input_ids"]
+            max_id = input_ids.max().item()
+            min_id = input_ids.min().item()
+
+            if max_id >= vocab_size or min_id < 0:
+                print(f"\n[TAR ERROR] Invalid tokens before device transfer in batch {batch_idx}:")
+                print(f"  Token range: [{min_id}, {max_id}], vocab_size={vocab_size}")
+                print(f"  Batch shape: {input_ids.shape}")
+                # Skip this batch to avoid CUDA errors
+                print("  Skipping batch to avoid CUDA crash")
+                continue
+
             batch = {k: v.to(device) for k, v in batch.items()} # Move batch to same device as model as we're not using HF Trainer
+
+            # Double-check after device transfer
+            if batch["input_ids"].max().item() >= vocab_size:
+                print(f"\n[TAR ERROR] Corruption after device transfer!")
+                print(f"  Max token ID after transfer: {batch['input_ids'].max().item()}")
+                continue
+
             optimizer.zero_grad()
             loss = nll_loss(model, batch)
             loss.backward()
