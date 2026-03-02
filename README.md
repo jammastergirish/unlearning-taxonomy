@@ -589,7 +589,7 @@ The cloze test in particular is the hardest to game: it requires the model to *g
 | `cb` | Activation-Space | `--layer-id`, `--steering-coeff`, `--alpha` | [Zou et al. 2024](https://arxiv.org/abs/2406.04313) |
 | `lat` | Activation-Space | `--layer-id`, `--lat-eps`, `--lat-steps`, `--retain-weight` | [Casper et al. 2024](https://arxiv.org/abs/2403.05030) |
 | `cb_lat` | Activation-Space | `--layer-id`, `--steering-coeff`, `--alpha`, `--lat-eps`, `--lat-steps` | [Zou, et al. ](https://arxiv.org/abs/2406.04313) + [Casper](https://arxiv.org/abs/2403.05030) |
-| `tar` | Parameter-Space | `--tar-alpha`, `--tar-lr`, `--tar-epochs` | Task Arithmetic |
+| `tar` | Parameter-Space | `--tar-alpha`, `--tar-lr`, `--tar-epochs` | [Ilharco et al. 2023](https://arxiv.org/abs/2212.04089) |
 | `wt_dist` | Parameter-Space | `--wt-noise-std` | [Siddiqui et al. 2025](https://arxiv.org/abs/2505.22310) |
 | `wt_dist_reg` | Parameter-Space | `--wt-reg-lambda` | [Siddiqui et al. 2025](https://arxiv.org/abs/2505.22310) |
 
@@ -698,6 +698,19 @@ Also from [*From Dormant to Deleted*](https://arxiv.org/abs/2505.22310). Minimiz
 $$L = \text{NLL}_{\text{retain}} - \lambda \cdot \|\theta - \theta_{\text{pretrained}}\|_2^2$$
 
 Where $\lambda$ is `--wt-reg-lambda` (default 0.1). The paper shows this produces the highest tamper-resistance of all methods tested, outperforming CB, RMU, SCRUB, and even CB-LAT under relearning attacks.
+
+##### TAR — Task Arithmetic for Unlearning
+
+From [*Editing Models with Task Arithmetic*](https://arxiv.org/abs/2212.04089). This method leverages task arithmetic to perform unlearning by subtracting a "forget task vector" from the pretrained model weights. The approach works by first fine-tuning a copy of the base model on the forget set to create a "forget model," then computing the difference vector and subtracting it from the original weights.
+
+**Process:**
+1. Fine-tune base model on forget set: $\theta_{\text{forget}} \leftarrow \text{finetune}(\theta_{\text{base}}, \mathcal{D}_{\text{forget}})$
+2. Compute forget task vector: $\tau_{\text{forget}} = \theta_{\text{forget}} - \theta_{\text{base}}$
+3. Apply negated task vector: $\theta_{\text{unlearned}} = \theta_{\text{base}} - \alpha \cdot \tau_{\text{forget}}$
+
+The `--tar-alpha` parameter controls the strength of the subtraction (default varies by method), `--tar-lr` sets the learning rate for the forget model fine-tuning phase, and `--tar-epochs` determines how many epochs to train the forget model.
+
+**Why this matters:** Task arithmetic provides a simple, training-free way to perform unlearning once the forget task vector is computed. However, the method's effectiveness depends heavily on the assumption that the forget knowledge forms a linearly separable subspace in parameter space, which may not hold for complex, distributed representations.
 
 ---
 
