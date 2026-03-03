@@ -578,3 +578,111 @@ class TestRunEvaluationBenchmarks:
             mock_wandb_log.assert_called_once_with(expected_metrics)
             mock_wandb_summary.update.assert_called_once_with(expected_metrics)
 
+
+
+# ---------------------------------------------------------------------------
+# chunked_cross_entropy
+# ---------------------------------------------------------------------------
+class TestChunkedCrossEntropy:
+    """Verify chunked_cross_entropy is a drop-in replacement for F.cross_entropy.
+
+    The core claim is mathematical identity: computing cross-entropy in
+    chunks over the batch dimension must give bit-for-bit the same answer
+    as computing it over the full batch at once, because cross-entropy is
+    independent per token.
+    """
+
+    def setup_method(self):
+        import torch
+        import torch.nn.functional as F
+        from unlearn import chunked_cross_entropy
+        self.torch = torch
+        self.F = F
+        self.fn = chunked_cross_entropy
+
+    def _make_logits_labels(self, B=8, T=16, V=100, seed=42):
+        self.torch.manual_seed(seed)
+        logits = self.torch.randn(B, T, V)
+        labels = self.torch.randint(0, V, (B, T))
+        return logits, labels
+
+    def test_matches_f_cross_entropy_full_batch(self):
+        """Default chunk_size=4 must give the same flat tensor as F.cross_entropy."""
+        logits, labels = self._make_logits_labels(B=8)
+        expected = self.F.cross_entropy(
+            logits.view(-1, logits.size(-1)), labels.view(-1), reduction="none"
+        )
+        got = self.fn(logits, labels)
+        self.torch.testing.assert_close(got, expected, rtol=0, atol=0)
+
+    def test_chunk_size_1_matches(self):
+        """Chunk size of 1 (most conservative) must still match."""
+        logits, labels = self._make_logits_labels(B=6)
+        expected = self.F.cross_entropy(
+            logits.view(-1, logits.size(-1)), labels.view(-1), reduction="none"
+        )
+        got = self.fn(logits, labels, chunk_size=1)
+        self.torch.testing.assert_close(got, expected, rtol=0, atol=0)
+
+    def test_chunk_size_larger_than_batch(self):
+        """chunk_size > B should work fine (just one pass over everything)."""
+        logits, labels = self._make_logits_labels(B=3)
+        expected = self.F.cross_entropy(
+            logits.view(-1, logits.size(-1)), labels.view(-1), reduction="none"
+        )
+        got = self.fn(logits, labels, chunk_size=100)
+        self.torch.testing.assert_close(got, expected, rtol=0, atol=0)
+
+    def test_batch_size_1(self):
+        """B=1 edge case must work."""
+        logits, labels = self._make_logits_labels(B=1)
+        expected = self.F.cross_entropy(
+            logits.view(-1, logits.size(-1)), labels.view(-1), reduction="none"
+        )
+        got = self.fn(logits, labels, chunk_size=4)
+        self.torch.testing.assert_close(got, expected, rtol=0, atol=0)
+
+    def test_output_shape(self):
+        """Output should be (B * T,) — flat per-token losses."""
+        B, T, V = 5, 12, 50
+        logits, labels = self._make_logits_labels(B=B, T=T, V=V)
+        out = self.fn(logits, labels, chunk_size=2)
+        assert out.shape == (B * T,), f"Expected ({B * T},), got {out.shape}"
+
+    def test_various_chunk_sizes_all_match(self):
+        """chunk_size 1, 2, 3, 4, 7, 32 all produce identical results."""
+        logits, labels = self._make_logits_labels(B=12)
+        expected = self.F.cross_entropy(
+            logits.view(-1, logits.size(-1)), labels.view(-1), reduction="none"
+        )
+        for cs in [1, 2, 3, 4, 7, 32]:
+            got = self.fn(logits, labels, chunk_size=cs)
+            self.torch.testing.assert_close(got, expected, rtol=0, atol=0)
+
+    def test_gradients_flow_through(self):
+        """sum().backward() must produce gradients on the logits tensor."""
+        logits, labels = self._make_logits_labels(B=4)
+        logits = logits.requires_grad_(True)
+        loss = self.fn(logits, labels, chunk_size=2).sum()
+        loss.backward()
+        assert logits.grad is not None
+        assert not self.torch.isnan(logits.grad).any()
+
+    def test_masked_average_matches_reference(self):
+        """Test the full nll_loss pattern: chunked CE + mask + mean."""
+        B, T, V = 4, 8, 50
+        self.torch.manual_seed(7)
+        logits = self.torch.randn(B, T - 1, V)
+        labels = self.torch.randint(0, V, (B, T - 1))
+        mask = self.torch.ones(B, T - 1)
+        mask[0, -2:] = 0  # simulate padding on first sample
+
+        ref = self.F.cross_entropy(
+            logits.view(-1, V), labels.view(-1), reduction="none"
+        )
+        ref_loss = (ref * mask.view(-1)).sum() / mask.sum().clamp(min=1)
+
+        chunked = self.fn(logits, labels.view(B, -1), chunk_size=2)
+        chunked_loss = (chunked * mask.view(-1)).sum() / mask.sum().clamp(min=1)
+
+        self.torch.testing.assert_close(chunked_loss, ref_loss, rtol=1e-5, atol=1e-5)

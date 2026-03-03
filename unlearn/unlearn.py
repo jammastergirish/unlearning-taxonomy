@@ -145,6 +145,67 @@ def make_batches(items: list[dict], batch_size: int, drop_last: bool = True) -> 
 # (low NLL on retain).  Each method below achieves this differently.
 # ===================================================================
 
+
+def chunked_cross_entropy(
+    logits: torch.Tensor,
+    labels: torch.Tensor,
+    chunk_size: int = 4,
+) -> torch.Tensor:
+    """Memory-efficient cross-entropy that never materialises the full token logit matrix.
+
+    Background
+    ----------
+    Standard ``F.cross_entropy(logits.view(-1, V), labels.view(-1))`` needs to
+    build an intermediate tensor of shape ``(B * T, vocab_size)`` on the *single
+    GPU* that holds the final layer — typically ~3 GiB for a 7B model at
+    batch=32, seq=512, vocab=50K.  This pushes an already-full A40 over the
+    edge. 
+
+    The fix
+    -------
+    https://github.com/karpathy/nanochat/pull/128
+    
+    Cross-entropy is **independent per token** — token ``i``'s loss depends
+    only on ``logits[i]`` and ``labels[i]``, never on any other position.  So
+    we can process ``chunk_size`` batch elements at a time, free each chunk
+    before moving to the next, and concatenate the per-token losses at the end.
+    Peak memory scales with ``chunk_size`` instead of ``B``, while the numbers
+    are **bit-for-bit identical** to computing everything at once.
+
+    Parameters
+    ----------
+    logits :
+        Shape ``(B, T, vocab_size)`` — raw model output *before* softmax.
+    labels :
+        Shape ``(B, T)`` — ground-truth next-token IDs.
+    chunk_size :
+        Number of batch elements to process per chunk.  Smaller → less peak
+        memory, slightly more kernel overhead.  Default of 4 keeps peak logit
+        allocation to ~0.4 GiB for the above example.
+
+    Returns
+    -------
+    Flat ``(B * T,)`` tensor of per-token cross-entropy values, in the same
+    order as ``logits.view(-1, V)`` / ``labels.view(-1)`` — a drop-in
+    replacement for ``F.cross_entropy(..., reduction="none")``.
+    """
+    B = logits.size(0)
+    chunks = []
+    for start in range(0, B, chunk_size):
+        end = min(start + chunk_size, B)
+        # logits_chunk: (chunk, T, V) — only a slice of the batch is live at once
+        logits_chunk = logits[start:end].reshape(-1, logits.size(-1))
+        labels_chunk = labels[start:end].reshape(-1)
+        # F.cross_entropy does: log_softmax(logits) then NLL — no full-batch
+        # allocation needed because we are already working on a small slice.
+        chunk_loss = F.cross_entropy(logits_chunk, labels_chunk, reduction="none")
+        chunks.append(chunk_loss)
+        # Explicitly delete the slice so the allocator can reuse the memory
+        # before the next iteration allocates a new one.
+        del logits_chunk, labels_chunk
+    return torch.cat(chunks)
+
+
 def nll_loss(model, batch: dict) -> torch.Tensor:
     """Standard next-token prediction (causal LM) loss.
 
@@ -189,10 +250,12 @@ def nll_loss(model, batch: dict) -> torch.Tensor:
         # This path shouldn't be reached if above check works
         labels = torch.clamp(labels, 0, vocab_size - 1)
 
-    # Per-token cross-entropy, then mask out padding and average over real tokens
-    loss = F.cross_entropy(
-        logits.view(-1, logits.size(-1)), labels.view(-1), reduction="none"
-    )
+    # Per-token cross-entropy, then mask out padding and average over real tokens.
+    # Using chunked_cross_entropy instead of F.cross_entropy to avoid
+    # materialising the full (B*T, vocab_size) tensor at once on the GPU that
+    # holds the lm_head — the peak allocation (~3 GiB at batch=32) would OOM
+    # on an A40 that already has model weights + optimizer states loaded.
+    loss = chunked_cross_entropy(logits, labels.view(logits.size(0), -1))
     loss = (loss * mask.view(-1)).sum() / mask.sum().clamp(min=1)
     return loss
 
@@ -637,11 +700,8 @@ def lat_loss(
         logits = out.logits[:, :-1, :].contiguous()
         labels = forget_batch["input_ids"][:, 1:].contiguous()
         mask = forget_batch["attention_mask"][:, 1:].contiguous()
-        adv_loss = F.cross_entropy(
-            logits.view(-1, logits.size(-1)), labels.view(-1), reduction="none"
-        )
-        # The adversary wants to MINIMIZE loss (make the model GOOD at forget
-        # data despite unlearning), so we negate the cross-entropy.
+        adv_loss = chunked_cross_entropy(logits, labels.view(logits.size(0), -1))
+        # The adversary wants to MINIMISE loss (keep the model good at forget data
         adv_loss = -(adv_loss * mask.view(-1)).sum() / mask.sum().clamp(min=1)
 
         handle.remove()  # clean up the hook
@@ -746,8 +806,7 @@ def cb_lat_loss(
         logits = out.logits[:, :-1, :].contiguous()
         labels = forget_batch["input_ids"][:, 1:].contiguous()
         mask = forget_batch["attention_mask"][:, 1:].contiguous()
-        adv_loss = F.cross_entropy(
-            logits.view(-1, logits.size(-1)), labels.view(-1), reduction="none")
+        adv_loss = chunked_cross_entropy(logits, labels.view(logits.size(0), -1))
         adv_loss = -(adv_loss * mask.view(-1)).sum() / mask.sum().clamp(min=1)
         handle.remove()
         adv_loss.backward(inputs=[delta])
