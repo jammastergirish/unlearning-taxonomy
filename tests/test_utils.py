@@ -371,16 +371,17 @@ class TestComputeTrainingMaxMemory:
         assert all(v.endswith("GiB") for v in result.values())
 
     def test_budget_formula(self):
-        """weight_budget = (free - activation_buf) / (1 + optimizer_mult)."""
-        free_gib = 140.0
+        """weight_budget = (total - activation_buf) / (1 + optimizer_mult)."""
+        total_gib = 140.0
         activation_buf = 10.0
         multiplier = 6.0
-        expected_gib = int((free_gib - activation_buf) / (1 + multiplier))
+        expected_gib = int((total_gib - activation_buf) / (1 + multiplier))
 
         with pytest.MonkeyPatch().context() as mp:
             mp.setattr("torch.cuda.is_available", lambda: True)
             mp.setattr("torch.cuda.device_count", lambda: 1)
-            mp.setattr("torch.cuda.mem_get_info", lambda i: self._mem(free_gib))
+            # mem_get_info returns (free, total); we use total now
+            mp.setattr("torch.cuda.mem_get_info", lambda i: self._mem(total_gib))
             result = compute_training_max_memory(optimizer_state_multiplier=multiplier,
                                                  activation_buffer_gib=activation_buf)
         assert result[0] == f"{expected_gib}GiB"
@@ -395,8 +396,9 @@ class TestComputeTrainingMaxMemory:
         assert result[0] == result[1]
 
     def test_asymmetric_gpus_get_different_budgets(self):
-        """GPUs with different free VRAM get proportionally different budgets."""
-        mem_map = {0: self._mem(140), 1: self._mem(40)}
+        """GPUs with different total VRAM get proportionally different budgets."""
+        # _mem(free, total) — now we need different totals
+        mem_map = {0: self._mem(0, 140), 1: self._mem(0, 40)}
         with pytest.MonkeyPatch().context() as mp:
             mp.setattr("torch.cuda.is_available", lambda: True)
             mp.setattr("torch.cuda.device_count", lambda: 2)
@@ -405,14 +407,14 @@ class TestComputeTrainingMaxMemory:
                                                  activation_buffer_gib=10.0)
         budget_0 = int(result[0].replace("GiB", ""))
         budget_1 = int(result[1].replace("GiB", ""))
-        assert budget_0 > budget_1  # GPU 0 has more free, gets larger budget
+        assert budget_0 > budget_1  # GPU 0 has more total VRAM, gets larger budget
 
     def test_minimum_budget_is_1gib(self):
         """Even if the computed budget is tiny, it's clamped to at least 1 GiB."""
         with pytest.MonkeyPatch().context() as mp:
             mp.setattr("torch.cuda.is_available", lambda: True)
             mp.setattr("torch.cuda.device_count", lambda: 1)
-            # Only 0.5 GiB free — well below activation buffer
-            mp.setattr("torch.cuda.mem_get_info", lambda i: self._mem(0.5))
+            # total=0.5 GiB — well below activation buffer, so usable=0 → clamped to 1
+            mp.setattr("torch.cuda.mem_get_info", lambda i: self._mem(0, 0.5))
             result = compute_training_max_memory(activation_buffer_gib=10.0)
         assert result[0] == "1GiB"

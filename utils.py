@@ -171,10 +171,16 @@ def compute_training_max_memory(
 
     for i in range(n):
         try:
-            free, _ = torch.cuda.mem_get_info(i)
-            usable = max(0, free - activation_buffer_bytes)
-            # Weights + optimizer states must both fit:
-            #   Y (weights) + multiplier*Y (optimizer) = (1+multiplier)*Y ≤ usable
+            _, total = torch.cuda.mem_get_info(i)
+            # Use *total* VRAM (not free) as the budget ceiling.
+            # filter_gpus_by_free_vram() already ensures the GPU has enough
+            # headroom; using free VRAM here would make the budget tiny when
+            # other processes are present, causing accelerate to spill weights
+            # to disk (catastrophic for training speed).
+            # Instead: weight_budget = total / (1 + optimizer_mult)
+            # Subtract activation buffer from total first so forward-pass
+            # tensors have headroom too.
+            usable = max(0, total - activation_buffer_bytes)
             weight_budget_bytes = int(usable / (1.0 + optimizer_state_multiplier))
             weight_budget_gib = max(1, weight_budget_bytes // (1024 ** 3))
             max_memory[i] = f"{weight_budget_gib}GiB"
