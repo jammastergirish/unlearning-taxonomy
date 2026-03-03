@@ -46,7 +46,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments
 # Reuse device / dtype helpers from utils.py if available, else inline
 # ---------------------------------------------------------------------------
 try:
-    from utils import resolve_device, resolve_dtype, model_outdir, filter_gpus_by_free_vram
+    from utils import resolve_device, resolve_dtype, model_outdir, filter_gpus_by_free_vram, compute_training_max_memory
 except ImportError as e:
     raise ImportError(f"Could not import utils.py from project root: {e}") from e
 
@@ -1352,13 +1352,26 @@ def main():
     print(f"[unlearn] Loading base model: {args.model}")
 
     # If device is auto, let accelerate distribute it across available GPUs.
-    # First, restrict CUDA_VISIBLE_DEVICES to GPUs with enough free VRAM so
-    # that device_map='auto' never places layers on a near-full GPU.
+    # 1. Restrict CUDA_VISIBLE_DEVICES to GPUs with enough free VRAM so that
+    #    device_map='auto' never places layers on a near-full GPU.
+    # 2. Compute a per-GPU max_memory budget that leaves headroom for fp32
+    #    optimizer states (~6× bf16 params) and forward-pass activations, so
+    #    accelerate is forced to spread weights across all visible GPUs rather
+    #    than packing everything onto the first one.
     if args.device == "auto" and torch.cuda.is_available():
         usable = filter_gpus_by_free_vram(min_free_gib=10.0)
         os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(i) for i in usable)
         print(f"[unlearn] Restricting to GPUs with ≥10 GiB free: {usable}")
-    device_map_kwargs = {"device_map": "auto"} if args.device == "auto" else {}
+
+        # Scale activation buffer with batch size (larger batches need more headroom).
+        activation_buf_gib = max(8.0, args.batch_size * 0.4)
+        mm = compute_training_max_memory(
+            optimizer_state_multiplier=6.0,
+            activation_buffer_gib=activation_buf_gib,
+        )
+        device_map_kwargs = {"device_map": "auto", **({"max_memory": mm} if mm else {})}
+    else:
+        device_map_kwargs = {}
     
     model = AutoModelForCausalLM.from_pretrained(
         args.model, torch_dtype=pt_dtype, trust_remote_code=True, **device_map_kwargs

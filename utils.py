@@ -134,6 +134,63 @@ def filter_gpus_by_free_vram(min_free_gib: float = 10.0) -> list[int]:
     return usable
 
 
+def compute_training_max_memory(
+    optimizer_state_multiplier: float = 6.0,
+    activation_buffer_gib: float = 10.0,
+) -> dict | None:
+    """Compute per-GPU max_memory budget for from_pretrained(device_map='auto').
+
+    accelerate's device_map='auto' places *model weights* using the max_memory
+    budget, but fp32 optimizer states (Adam m + v + fp32 master weights ≈ 6×
+    the bf16 parameter bytes) are allocated afterward on the same devices.
+    Left unconstrained, accelerate packs all weights onto the fewest GPUs
+    possible — optimizer states then overflow at training time.
+
+    This function computes a per-GPU weight budget that leaves room for both
+    optimizer states and activations:
+
+        weight_budget = (free_vram - activation_buffer) / (1 + optimizer_multiplier)
+
+    Args:
+        optimizer_state_multiplier: bytes of optimizer state per byte of bf16
+            model weight. fp32 Adam (m + v + master copy) = 6.0; bf16 Adam = 2.0.
+        activation_buffer_gib: GiB to reserve per GPU for activation tensors
+            during the forward/backward pass. Scale up for larger batches.
+
+    Returns:
+        Dict mapping GPU index → memory string (e.g. {0: "18GiB", 1: "18GiB"})
+        for passing to from_pretrained(max_memory=...), or None if CUDA is
+        unavailable.
+    """
+    if not torch.cuda.is_available():
+        return None
+
+    activation_buffer_bytes = int(activation_buffer_gib * 1024 ** 3)
+    n = torch.cuda.device_count()
+    max_memory = {}
+
+    for i in range(n):
+        try:
+            free, _ = torch.cuda.mem_get_info(i)
+            usable = max(0, free - activation_buffer_bytes)
+            # Weights + optimizer states must both fit:
+            #   Y (weights) + multiplier*Y (optimizer) = (1+multiplier)*Y ≤ usable
+            weight_budget_bytes = int(usable / (1.0 + optimizer_state_multiplier))
+            weight_budget_gib = max(1, weight_budget_bytes // (1024 ** 3))
+            max_memory[i] = f"{weight_budget_gib}GiB"
+        except Exception:
+            pass
+
+    if not max_memory:
+        return None
+
+    indices = list(max_memory.keys())
+    budgets = [max_memory[i] for i in indices]
+    print(f"[device] max_memory per GPU (for device_map='auto'): "
+          + ", ".join(f"GPU{i}={b}" for i, b in zip(indices, budgets)))
+    return max_memory
+
+
 def resolve_device(device: str) -> str:
     """Resolve 'auto' device to the best available (cuda:N > mps > cpu).
 
