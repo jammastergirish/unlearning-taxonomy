@@ -26,6 +26,8 @@ from utils import (
     compute_spectral_norm,
     resolve_dtype,
     write_csv,
+    filter_gpus_by_free_vram,
+    compute_training_max_memory,
 )
 
 
@@ -295,3 +297,122 @@ class TestWriteCsv:
         deep_path = os.path.join(temp_dir, "a", "b", "c", "out.csv")
         write_csv(deep_path, [{"x": 1}], ["x"])
         assert os.path.exists(deep_path)
+
+
+# ---------------------------------------------------------------------------
+# filter_gpus_by_free_vram
+# ---------------------------------------------------------------------------
+class TestFilterGpusByFreeVram:
+    def _mem(self, free_gib, total_gib=50):
+        """Return (free_bytes, total_bytes) for a given free_gib."""
+        return (int(free_gib * 1024 ** 3), int(total_gib * 1024 ** 3))
+
+    def test_all_gpus_qualify(self):
+        """When every GPU has enough free VRAM all indices are returned."""
+        with pytest.MonkeyPatch().context() as mp:
+            mp.setattr("torch.cuda.is_available", lambda: True)
+            mp.setattr("torch.cuda.device_count", lambda: 3)
+            mem_map = {0: self._mem(20), 1: self._mem(20), 2: self._mem(20)}
+            mp.setattr("torch.cuda.mem_get_info", lambda i: mem_map[i])
+            result = filter_gpus_by_free_vram(min_free_gib=10.0)
+        assert result == [0, 1, 2]
+
+    def test_some_gpus_excluded(self):
+        """GPUs with < min_free_gib are excluded."""
+        with pytest.MonkeyPatch().context() as mp:
+            mp.setattr("torch.cuda.is_available", lambda: True)
+            mp.setattr("torch.cuda.device_count", lambda: 4)
+            mem_map = {0: self._mem(2), 1: self._mem(20), 2: self._mem(3), 3: self._mem(15)}
+            mp.setattr("torch.cuda.mem_get_info", lambda i: mem_map[i])
+            result = filter_gpus_by_free_vram(min_free_gib=10.0)
+        assert result == [1, 3]
+
+    def test_no_gpu_qualifies_falls_back_to_best(self):
+        """When no GPU meets the threshold the best GPU is returned as fallback."""
+        with pytest.MonkeyPatch().context() as mp:
+            mp.setattr("torch.cuda.is_available", lambda: True)
+            mp.setattr("torch.cuda.device_count", lambda: 2)
+            mem_map = {0: self._mem(1), 1: self._mem(3)}
+            mp.setattr("torch.cuda.mem_get_info", lambda i: mem_map[i])
+            result = filter_gpus_by_free_vram(min_free_gib=10.0)
+        # Falls back to GPU 1 (most free)
+        assert result == [1]
+
+    def test_no_cuda_returns_empty(self):
+        """With no CUDA available an empty list is returned."""
+        with pytest.MonkeyPatch().context() as mp:
+            mp.setattr("torch.cuda.is_available", lambda: False)
+            result = filter_gpus_by_free_vram(min_free_gib=10.0)
+        assert result == []
+
+
+# ---------------------------------------------------------------------------
+# compute_training_max_memory
+# ---------------------------------------------------------------------------
+class TestComputeTrainingMaxMemory:
+    def _mem(self, free_gib, total_gib=140):
+        return (int(free_gib * 1024 ** 3), int(total_gib * 1024 ** 3))
+
+    def test_no_cuda_returns_none(self):
+        with pytest.MonkeyPatch().context() as mp:
+            mp.setattr("torch.cuda.is_available", lambda: False)
+            assert compute_training_max_memory() is None
+
+    def test_returns_dict_with_gpu_keys(self):
+        """Result maps GPU index → string like '18GiB'."""
+        with pytest.MonkeyPatch().context() as mp:
+            mp.setattr("torch.cuda.is_available", lambda: True)
+            mp.setattr("torch.cuda.device_count", lambda: 2)
+            mp.setattr("torch.cuda.mem_get_info", lambda i: self._mem(140))
+            result = compute_training_max_memory(optimizer_state_multiplier=6.0,
+                                                 activation_buffer_gib=10.0)
+        assert isinstance(result, dict)
+        assert set(result.keys()) == {0, 1}
+        assert all(v.endswith("GiB") for v in result.values())
+
+    def test_budget_formula(self):
+        """weight_budget = (free - activation_buf) / (1 + optimizer_mult)."""
+        free_gib = 140.0
+        activation_buf = 10.0
+        multiplier = 6.0
+        expected_gib = int((free_gib - activation_buf) / (1 + multiplier))
+
+        with pytest.MonkeyPatch().context() as mp:
+            mp.setattr("torch.cuda.is_available", lambda: True)
+            mp.setattr("torch.cuda.device_count", lambda: 1)
+            mp.setattr("torch.cuda.mem_get_info", lambda i: self._mem(free_gib))
+            result = compute_training_max_memory(optimizer_state_multiplier=multiplier,
+                                                 activation_buffer_gib=activation_buf)
+        assert result[0] == f"{expected_gib}GiB"
+
+    def test_both_gpus_get_same_budget_when_equal_free(self):
+        """With equal free VRAM both GPUs get the same budget string."""
+        with pytest.MonkeyPatch().context() as mp:
+            mp.setattr("torch.cuda.is_available", lambda: True)
+            mp.setattr("torch.cuda.device_count", lambda: 2)
+            mp.setattr("torch.cuda.mem_get_info", lambda i: self._mem(80))
+            result = compute_training_max_memory()
+        assert result[0] == result[1]
+
+    def test_asymmetric_gpus_get_different_budgets(self):
+        """GPUs with different free VRAM get proportionally different budgets."""
+        mem_map = {0: self._mem(140), 1: self._mem(40)}
+        with pytest.MonkeyPatch().context() as mp:
+            mp.setattr("torch.cuda.is_available", lambda: True)
+            mp.setattr("torch.cuda.device_count", lambda: 2)
+            mp.setattr("torch.cuda.mem_get_info", lambda i: mem_map[i])
+            result = compute_training_max_memory(optimizer_state_multiplier=6.0,
+                                                 activation_buffer_gib=10.0)
+        budget_0 = int(result[0].replace("GiB", ""))
+        budget_1 = int(result[1].replace("GiB", ""))
+        assert budget_0 > budget_1  # GPU 0 has more free, gets larger budget
+
+    def test_minimum_budget_is_1gib(self):
+        """Even if the computed budget is tiny, it's clamped to at least 1 GiB."""
+        with pytest.MonkeyPatch().context() as mp:
+            mp.setattr("torch.cuda.is_available", lambda: True)
+            mp.setattr("torch.cuda.device_count", lambda: 1)
+            # Only 0.5 GiB free — well below activation buffer
+            mp.setattr("torch.cuda.mem_get_info", lambda i: self._mem(0.5))
+            result = compute_training_max_memory(activation_buffer_gib=10.0)
+        assert result[0] == "1GiB"
