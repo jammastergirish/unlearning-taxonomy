@@ -99,46 +99,57 @@ def main():
     if args.outdir is None:
         args.outdir = model_outdir(args.model, suffix="evals")
 
-    # Build model_args string for lm-eval with memory-efficient defaults
-    model_args = f"pretrained={args.model}"
-
-    # Always use device_map='auto' for automatic memory management
-    model_args += ",device_map=auto"
-
-    # Always set up CPU offloading to handle large models
-    offload_folder = "/tmp/offload"
-    model_args += f",offload_folder={offload_folder}"
-    os.makedirs(offload_folder, exist_ok=True)
-
-    # Always use low CPU memory usage for efficiency
-    model_args += ",low_cpu_mem_usage=True"
-
-    # Add dtype if specified
-    if args.dtype != "auto":
-        model_args += f",dtype={args.dtype}"
-
     # Clear memory before starting evaluation
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
 
-    # Use pick_best_gpu() to select the GPU with most free memory,
-    # then let device_map='auto' use it with CPU offloading as needed
-    if torch.cuda.is_available():
-        best_gpu = pick_best_gpu()
-        # Restrict to the best GPU for device_map to use primarily
-        os.environ["CUDA_VISIBLE_DEVICES"] = str(best_gpu)
-        print(f"[eval] Selected GPU {best_gpu} (most free memory)")
+    # --- Decide CPU vs GPU ---
+    # Honour an explicit --device cpu (e.g. set by unlearn.py when GPU is busy).
+    # Otherwise check that the best GPU has >= 10 GiB free before committing to CUDA.
+    _MIN_EVAL_VRAM_GIB = 10.0  # GiB — minimum free VRAM to attempt GPU eval
+    _use_cpu = False
 
-    # Since we're using device_map='auto', we don't specify a device to lm-eval
-    device = None  # Let device_map handle everything
+    if args.device == "cpu":
+        _use_cpu = True
+        print("[eval] Using CPU (--device cpu requested)")
+    elif torch.cuda.is_available():
+        best_gpu = pick_best_gpu()
+        free_bytes, _ = torch.cuda.mem_get_info(best_gpu)
+        free_gib = free_bytes / 1024 ** 3
+        if free_gib < _MIN_EVAL_VRAM_GIB:
+            _use_cpu = True
+            print(f"[eval] WARNING: GPU {best_gpu} only has {free_gib:.1f} GiB free "
+                  f"(need ≥ {_MIN_EVAL_VRAM_GIB:.0f} GiB). Falling back to CPU.")
+        else:
+            os.environ["CUDA_VISIBLE_DEVICES"] = str(best_gpu)
+            print(f"[eval] Selected GPU {best_gpu} ({free_gib:.1f} GiB free)")
+    else:
+        _use_cpu = True
+
+    # --- Build model_args for lm-eval ---
+    model_args = f"pretrained={args.model},low_cpu_mem_usage=True"
+
+    if _use_cpu:
+        # Plain CPU load — no device_map, no offloading needed
+        device = "cpu"
+    else:
+        # GPU: use device_map='auto' with CPU offload as a safety net
+        model_args += ",device_map=auto"
+        offload_folder = "/tmp/offload"
+        model_args += f",offload_folder={offload_folder}"
+        os.makedirs(offload_folder, exist_ok=True)
+        device = None  # let device_map handle placement
+
+    if args.dtype != "auto":
+        model_args += f",dtype={args.dtype}"
 
     # Build task manager with custom task path so vendored YAMLs are discovered
     task_manager = TaskManager(include_path=args.include_path)
 
     print(f"[eval] Model:   {args.model}")
-    print(f"[eval] Device:  auto (device_map with CPU offloading)")
+    print(f"[eval] Device:  {'cpu' if _use_cpu else 'auto (device_map + CPU offload)'}")
     print(f"[eval] Tasks:   {', '.join(args.tasks)}")
     print(f"[eval] Custom:  {args.include_path}")
     if args.limit:
