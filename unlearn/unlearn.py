@@ -882,7 +882,6 @@ def apply_tar(model, forget_batches, alpha, lr, epochs, device, pt_dtype=None, a
 
     # Import trainer components
     import sys
-    import os
     _unlearn_dir = os.path.dirname(os.path.abspath(__file__))
     if _unlearn_dir not in sys.path:
         sys.path.insert(0, _unlearn_dir)
@@ -1509,7 +1508,6 @@ def main():
         import gc; gc.collect()   # Python garbage collection
 
         # Set PyTorch memory allocator to avoid fragmentation
-        import os
         os.environ['PYTORCH_ALLOC_CONF'] = 'expandable_segments:True'
 
         # Run evaluation if needed
@@ -1545,7 +1543,6 @@ def main():
     # trainer.py lives alongside unlearn.py in the unlearn/ directory.
     # Since unlearn.py is run as a uv --script (not an installed package),
     # we add its own directory to sys.path so `import trainer` resolves.
-    import os  # Local import to avoid scope issues
     _unlearn_dir = os.path.dirname(os.path.abspath(__file__))
     if _unlearn_dir not in sys.path:
         sys.path.insert(0, _unlearn_dir)
@@ -1665,7 +1662,6 @@ def main():
     import gc; gc.collect()   # Python garbage collection
 
     # Set PyTorch memory allocator to avoid fragmentation
-    import os
     os.environ['PYTORCH_ALLOC_CONF'] = 'expandable_segments:True'
 
     run_evaluation_benchmarks(args.outdir, args.device, args.dtype, args.no_eval)
