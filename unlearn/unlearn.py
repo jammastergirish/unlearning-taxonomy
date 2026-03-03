@@ -1265,21 +1265,36 @@ def main():
         import utils
         full_display_name = utils._derive_run_name("unlearn", args)
 
+        # Eval keys that analyze_runs.py expects — at least one must be present
+        # for the run to be considered truly complete (not just "finished" but
+        # crashed before the eval subprocess had a chance to log results).
+        _EVAL_KEYS = [
+            "eval_bench/mmlu/acc",
+            "eval_bench/wmdp_bio_robust/acc",
+            "eval_bench/wmdp_bio_cloze_verified/acc_norm",
+            "eval_bench/wmdp_bio_categorized_mcqa/acc",
+        ]
+
         try:
             import wandb
             api = wandb.Api()
             project_name = os.environ.get("WANDB_PROJECT", "cambridge_era")
             runs = api.runs(f"{project_name}", filters={"display_name": full_display_name})
             for r in runs:
-                if r.state == "finished":
-                    print(f"[unlearn] Idempotency check: Run '{full_display_name}' already finished in W&B. Skipping.")
+                if r.state != "finished":
+                    continue
+                has_eval = any(r.summary.get(k) is not None for k in _EVAL_KEYS)
+                if has_eval:
+                    print(f"[unlearn] Idempotency check: Run '{full_display_name}' already finished with eval results. Skipping.")
                     sys.exit(0)
+                else:
+                    print(f"[unlearn] Idempotency check: Run '{full_display_name}' finished but missing eval results. Will re-run.")
         except Exception as e:
             # If W&B API drops or isn't authed, ignore and assume we need to run
             pass
-        
-        # If we didn't find a finished run, exit 1 to signal that training should proceed
-        print(f"[unlearn] Idempotency check: Run '{full_display_name}' not found or not finished. Needs training.")
+
+        # If we didn't find a finished run with eval results, signal that training should proceed
+        print(f"[unlearn] Idempotency check: Run '{full_display_name}' not found or incomplete. Needs training.")
         sys.exit(1)
 
     print(f"[unlearn] Output directory: {args.outdir}")
