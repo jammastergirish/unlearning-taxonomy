@@ -122,13 +122,30 @@ PYEOF
     GROUP_SIZE=1
   else
     MIN_GPUS="$PROBE"
-    GROUP_SIZE="$NUM_GPUS"  # safe fallback
-    for gs in 1 2 4 8 16; do
-      if [[ "$gs" -ge "$MIN_GPUS" ]] && (( NUM_GPUS % gs == 0 )); then
+    # Find the best group size:
+    # 1. Must be >= MIN_GPUS (enough for the model)
+    # 2. Should divide NUM_GPUS evenly (no stranded GPUs)
+    # 3. Should be as close to MIN_GPUS as possible (minimize waste)
+    GROUP_SIZE="$NUM_GPUS"  # safe fallback (single job uses all GPUs)
+
+    # Check all divisors of NUM_GPUS that are >= MIN_GPUS
+    for gs in $(seq "$MIN_GPUS" "$NUM_GPUS"); do
+      if (( NUM_GPUS % gs == 0 )); then
         GROUP_SIZE="$gs"
-        break
+        break  # First valid divisor >= MIN_GPUS is optimal
       fi
     done
+
+    # If no exact divisor works, round up to next power of 2 for simplicity
+    if [[ "$GROUP_SIZE" -eq "$NUM_GPUS" ]] && [[ "$MIN_GPUS" -lt "$NUM_GPUS" ]]; then
+      for gs in 1 2 4 8 16; do
+        if [[ "$gs" -ge "$MIN_GPUS" ]] && (( NUM_GPUS % gs == 0 )); then
+          GROUP_SIZE="$gs"
+          break
+        fi
+      done
+    fi
+
     echo "[parallel_sweep] Model needs ${MIN_GPUS} GPU(s); group size → ${GROUP_SIZE}"
   fi
 fi
