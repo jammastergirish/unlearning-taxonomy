@@ -12,6 +12,19 @@ from safetensors.torch import save_file as save_safetensors
 # Ensure project root is importable
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+@pytest.fixture(autouse=True)
+def _disable_wandb_in_tests(monkeypatch):
+    """Prevent any test from accidentally creating real W&B runs.
+
+    Sets WANDB_MODE=disabled for every test so that even if WANDB_API_KEY
+    is present in .env, no runs are logged to the live cambridge_era project.
+    W&B unit tests are unaffected because they mock wandb via
+    patch.dict(sys.modules) before any real wandb.init call.
+    """
+    monkeypatch.setenv("WANDB_MODE", "disabled")
+
+
+
 
 @pytest.fixture
 def temp_dir():
