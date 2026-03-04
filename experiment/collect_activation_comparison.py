@@ -257,7 +257,8 @@ def compute_activation_diffs(
 # ---------------------------------------------------------------------------
 # Plotting — generates activation norm comparison charts from the CSV
 # ---------------------------------------------------------------------------
-def plot_activation_comparison(csv_path: str, outdir: str, title: str = None):
+def plot_activation_comparison(csv_path: str, outdir: str, title: str = None,
+                              model_a: str = "Model A (before)", model_b: str = "Model B (after)"):
     """Generate activation norm comparison plots from a per-layer CSV file."""
     import pandas as pd
     import matplotlib.pyplot as plt
@@ -278,16 +279,16 @@ def plot_activation_comparison(csv_path: str, outdir: str, title: str = None):
         # Plot 1: Absolute norms — L1 and L2 side-by-side, model A vs model B
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
 
-        ax1.plot(sub["layer"], sub["model_a_l1_norm"], marker="o", linewidth=1.5, label="Model A (before)", color="tab:blue")
-        ax1.plot(sub["layer"], sub["model_b_l1_norm"], marker="s", linewidth=1.5, label="Model B (after)", color="tab:orange")
+        ax1.plot(sub["layer"], sub["model_a_l1_norm"], marker="o", linewidth=1.5, label=model_a, color="tab:blue")
+        ax1.plot(sub["layer"], sub["model_b_l1_norm"], marker="s", linewidth=1.5, label=model_b, color="tab:orange")
         ax1.set_xlabel("Layer")
         ax1.set_ylabel(r"Mean $\|h\|_1$ per token")
         ax1.set_title(f"$L_1$ Activation Magnitude ({split})")
         ax1.legend()
         ax1.grid(alpha=0.3)
 
-        ax2.plot(sub["layer"], sub["model_a_l2_norm"], marker="o", linewidth=1.5, label="Model A (before)", color="tab:blue")
-        ax2.plot(sub["layer"], sub["model_b_l2_norm"], marker="s", linewidth=1.5, label="Model B (after)", color="tab:orange")
+        ax2.plot(sub["layer"], sub["model_a_l2_norm"], marker="o", linewidth=1.5, label=model_a, color="tab:blue")
+        ax2.plot(sub["layer"], sub["model_b_l2_norm"], marker="s", linewidth=1.5, label=model_b, color="tab:orange")
         ax2.set_xlabel("Layer")
         ax2.set_ylabel(r"Mean $\|h\|_2$ per token")
         ax2.set_title(f"$L_2$ Activation Magnitude ({split})")
@@ -442,7 +443,8 @@ def main():
 
     # Generate plots if requested
     if args.plot_outdir:
-        plot_activation_comparison(output_path, args.plot_outdir, args.title)
+        plot_activation_comparison(output_path, args.plot_outdir, args.title,
+                                  model_a=args.model_a, model_b=args.model_b)
         log_plots(args.plot_outdir, "activation_plots")
 
     finish_wandb()
