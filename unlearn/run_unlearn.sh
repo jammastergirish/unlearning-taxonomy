@@ -27,11 +27,16 @@ METHOD="${1:?Usage: $0 <ga_simple|ga|grad_diff|dpo|npo|simnpo|rmu|cb|lat|cb_lat|
 BASE="${BASE:-EleutherAI/deep-ignorance-unfiltered}"
 DEVICE="${DEVICE:-auto}"
 DTYPE="${DTYPE:-auto}"
+FORCE="${FORCE:-0}"
+# Also accept --force as a positional argument
+if [[ "${2:-}" == "--force" ]]; then FORCE=1; fi
 
 echo "=== Unlearning: method=${METHOD}  model=${BASE} ==="
 
-# Check if this exact sweep config has already finished in W&B
-if uv run --script unlearn/unlearn.py \
+# Check if this exact sweep config has already finished in W&B (skip when --force)
+if [[ "$FORCE" == "1" ]]; then
+  echo "=== --force: skipping W&B idempotency check ==="
+elif uv run --script unlearn/unlearn.py \
   --model "$BASE" \
   --method "$METHOD" \
   --forget-data data/forget.txt \

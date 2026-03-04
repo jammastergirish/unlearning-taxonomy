@@ -582,16 +582,25 @@ class SmartLoader:
         # Handle HF Hub IDs: If path doesn't exist locally, try downloading
         if not os.path.exists(model_path):
             print(f"'{model_path}' not found locally. Attempting HF Hub download...")
+            from huggingface_hub import snapshot_download
+            hf_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
             try:
-                from huggingface_hub import snapshot_download
                 model_path = snapshot_download(
                     repo_id=model_path,
                     allow_patterns=["*.safetensors", "*.bin", "*.json"],
-                    ignore_patterns=["*.msgpack", "*.h5"]
+                    ignore_patterns=["*.msgpack", "*.h5"],
+                    token=hf_token,
                 )
-                print(f"Downloaded/Found at: {model_path}")
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[SmartLoader] Network download failed ({e}), trying local cache...")
+                model_path = snapshot_download(
+                    repo_id=model_path,
+                    allow_patterns=["*.safetensors", "*.bin", "*.json"],
+                    ignore_patterns=["*.msgpack", "*.h5"],
+                    token=hf_token,
+                    local_files_only=True,
+                )
+            print(f"Downloaded/Found at: {model_path}")
 
         self.model_path = model_path
         self.index = {}
