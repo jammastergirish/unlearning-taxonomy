@@ -1274,8 +1274,11 @@ def build_outdir(args) -> str:
     for param in METHOD_PARAMS[method]:
         abbrev = PARAM_ABBREV[param]
         value = getattr(args, param)
+        # Use effective batch size for batch_size parameter
+        if param == "batch_size" and hasattr(args, "grad_accum_steps"):
+            value = value * args.grad_accum_steps
         # layer_id is a string like "5,6,7" — use dashes for folder safety
-        if param == "layer_id":
+        elif param == "layer_id":
             value = str(value).replace(",", "-")
         parts.append(f"{abbrev}{value}")
 
