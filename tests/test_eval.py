@@ -575,77 +575,95 @@ class TestSimpleEvaluateCall:
 
 
 # ---------------------------------------------------------------------------
-# W&B Logging
+# W&B Logging — always-on / WANDB_API_KEY-gated (replaces old --wandb-project tests)
 # ---------------------------------------------------------------------------
-class TestWandbLogging:
-    """Test Weights & Biases logging integration."""
+class TestWandbLoggingAlwaysOn:
+    """W&B is always-on; the only gate is whether WANDB_API_KEY is set."""
 
-    @patch.dict("sys.modules", {"wandb": MagicMock()})
-    def test_wandb_not_called_without_project(self, mock_lm_eval_results, tmp_path):
-        import wandb
-        wandb.init.reset_mock()
-        wandb.log.reset_mock()
+    def _run(self, mock_lm_eval_results, tmp_path, extra_argv=None):
         outdir = str(tmp_path / "out")
-        with patch.object(eval_module.lm_eval, "simple_evaluate", return_value=mock_lm_eval_results):
+        argv = ["eval.py", "--model", "org/test", "--outdir", outdir] + (extra_argv or [])
+        with patch.object(eval_module.lm_eval, "simple_evaluate",
+                          return_value=mock_lm_eval_results):
             with patch.object(eval_module, "TaskManager"):
-                with patch("sys.argv", ["eval.py", "--model", "org/test", "--outdir", outdir]):
+                with patch("sys.argv", argv):
                     eval_module.main()
 
+    @patch.dict("sys.modules", {"wandb": MagicMock()})
+    def test_skipped_when_api_key_absent(self, mock_lm_eval_results, tmp_path):
+        """W&B init must NOT be called when WANDB_API_KEY is missing."""
+        import wandb
+        wandb.init.reset_mock()
+        with patch.dict("os.environ", {}, clear=True):
+            self._run(mock_lm_eval_results, tmp_path)
         wandb.init.assert_not_called()
-        wandb.log.assert_not_called()
 
     @patch.dict("sys.modules", {"wandb": MagicMock()})
-    def test_wandb_called_with_project(self, mock_lm_eval_results, tmp_path):
+    def test_called_when_api_key_present(self, mock_lm_eval_results, tmp_path):
+        """W&B init IS called when WANDB_API_KEY is set — no extra CLI flags required."""
         import wandb
         wandb.init.reset_mock()
         wandb.log.reset_mock()
         wandb.summary.update.reset_mock()
         wandb.finish.reset_mock()
-        outdir = str(tmp_path / "out")
-        with patch.object(eval_module.lm_eval, "simple_evaluate", return_value=mock_lm_eval_results):
-            with patch.object(eval_module, "TaskManager"):
-                with patch("sys.argv", ["eval.py", "--model", "org/test", "--outdir", outdir, 
-                                        "--wandb-project", "my-test-proj"]):
-                    eval_module.main()
-
+        with patch.dict("os.environ", {"WANDB_API_KEY": "fake-key"}, clear=False):
+            self._run(mock_lm_eval_results, tmp_path)
         wandb.init.assert_called_once()
-        init_kwargs = wandb.init.call_args.kwargs
-        assert init_kwargs["project"] == "my-test-proj"
-        # Defaults to model name if run_name not provided
-        assert init_kwargs["name"] == "org/test"
-        
         wandb.log.assert_called_once()
-        log_data = wandb.log.call_args.args[0]
-        assert "eval_bench/mmlu/acc" in log_data
-        
-        wandb.summary.update.assert_called_once_with(log_data)
+        wandb.summary.update.assert_called_once()
         wandb.finish.assert_called_once()
 
     @patch.dict("sys.modules", {"wandb": MagicMock()})
-    def test_wandb_uses_custom_name(self, mock_lm_eval_results, tmp_path):
+    def test_project_is_cambridge_era(self, mock_lm_eval_results, tmp_path):
+        """Project must always be 'cambridge_era' — hardcoded, no flag required."""
         import wandb
         wandb.init.reset_mock()
-        outdir = str(tmp_path / "out")
-        with patch.object(eval_module.lm_eval, "simple_evaluate", return_value=mock_lm_eval_results):
-            with patch.object(eval_module, "TaskManager"):
-                with patch("sys.argv", ["eval.py", "--model", "org/test", "--outdir", outdir, 
-                                        "--wandb-project", "my-test-proj", "--wandb-name", "custom-run-123"]):
-                    eval_module.main()
+        with patch.dict("os.environ", {"WANDB_API_KEY": "fake-key"}, clear=False):
+            self._run(mock_lm_eval_results, tmp_path)
+        assert wandb.init.call_args.kwargs["project"] == "cambridge_era"
 
-        init_kwargs = wandb.init.call_args.kwargs
-        assert init_kwargs["name"] == "custom-run-123"
+    @patch.dict("sys.modules", {"wandb": MagicMock()})
+    def test_run_name_slashes_replaced(self, mock_lm_eval_results, tmp_path):
+        """Run name = model ID with '/' replaced by '_' (org/test → org_test)."""
+        import wandb
+        wandb.init.reset_mock()
+        with patch.dict("os.environ", {"WANDB_API_KEY": "fake-key"}, clear=False):
+            self._run(mock_lm_eval_results, tmp_path)
+        assert wandb.init.call_args.kwargs["name"] == "org_test"
+
+    @patch.dict("sys.modules", {"wandb": MagicMock()})
+    def test_tagged_eval(self, mock_lm_eval_results, tmp_path):
+        """The run must carry the 'eval' tag so it's filterable from unlearn runs."""
+        import wandb
+        wandb.init.reset_mock()
+        with patch.dict("os.environ", {"WANDB_API_KEY": "fake-key"}, clear=False):
+            self._run(mock_lm_eval_results, tmp_path)
+        assert "eval" in wandb.init.call_args.kwargs["tags"]
+
+    @patch.dict("sys.modules", {"wandb": MagicMock()})
+    def test_metrics_have_eval_bench_prefix(self, mock_lm_eval_results, tmp_path):
+        """Logged metrics must use eval_bench/<task>/<metric> namespace."""
+        import wandb
+        wandb.log.reset_mock()
+        with patch.dict("os.environ", {"WANDB_API_KEY": "fake-key"}, clear=False):
+            self._run(mock_lm_eval_results, tmp_path)
+        log_data = wandb.log.call_args.args[0]
+        assert "eval_bench/mmlu/acc" in log_data
+        assert not any("alias" in k for k in log_data)
 
     @patch("builtins.print")
-    def test_wandb_import_error_handled_gracefully(self, mock_print, mock_lm_eval_results, tmp_path):
-        outdir = str(tmp_path / "out")
-        with patch.object(eval_module.lm_eval, "simple_evaluate", return_value=mock_lm_eval_results):
-            with patch.object(eval_module, "TaskManager"):
-                with patch("sys.argv", ["eval.py", "--model", "org/test", "--outdir", outdir, 
-                                        "--wandb-project", "my-test-proj"]):
-                    # Force the runtime import to fail by putting None in sys.modules
-                    with patch.dict("sys.modules", {"wandb": None}):
-                        eval_module.main()
+    def test_import_error_handled_gracefully(self, mock_print, mock_lm_eval_results, tmp_path):
+        """If wandb fails to import at runtime, eval must still complete without crashing."""
+        with patch.dict("os.environ", {"WANDB_API_KEY": "fake-key"}, clear=False):
+            with patch.dict("sys.modules", {"wandb": None}):
+                self._run(mock_lm_eval_results, tmp_path)
+        printed = " ".join(c.args[0] for c in mock_print.call_args_list if c.args)
+        assert "WARNING: Failed to log to W&B" in printed
 
-        # The fallback "Failed to log to W&B" should be printed without crashing
-        printed_texts = " ".join([call.args[0] for call in mock_print.call_args_list if call.args])
-        assert "WARNING: Failed to log to W&B" in printed_texts
+    def test_wandb_project_flag_removed_from_parser(self):
+        """--wandb-project must no longer exist; passing it must raise SystemExit."""
+        with pytest.raises(SystemExit):
+            with patch("sys.argv", ["eval.py", "--model", "m", "--wandb-project", "x"]):
+                with patch.object(eval_module.lm_eval, "simple_evaluate"):
+                    with patch.object(eval_module, "TaskManager"):
+                        eval_module.main()

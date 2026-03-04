@@ -418,3 +418,95 @@ class TestComputeTrainingMaxMemory:
             mp.setattr("torch.cuda.mem_get_info", lambda i: self._mem(0, 0.5))
             result = compute_training_max_memory(activation_buffer_gib=10.0)
         assert result[0] == "1GiB"
+
+
+# ---------------------------------------------------------------------------
+# init_wandb — always-on / WANDB_API_KEY-gated behaviour
+# ---------------------------------------------------------------------------
+from utils import init_wandb
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+
+class TestInitWandb:
+    """Tests for utils.init_wandb().
+
+    Always logs to cambridge_era; silently skips when WANDB_API_KEY is absent
+    or when wandb is not installed.
+    """
+
+    def _args(self, outdir="outputs/comp_a__to__comp_b/weight_comparison"):
+        return SimpleNamespace(outdir=outdir)
+
+    def test_skips_when_api_key_absent(self):
+        """init_wandb must return None without calling wandb.init when key is missing."""
+        mock_wandb = MagicMock()
+        with patch.dict("os.environ", {}, clear=True):
+            with patch.dict("sys.modules", {"wandb": mock_wandb}):
+                result = init_wandb("test_script", self._args())
+        assert result is None
+        mock_wandb.init.assert_not_called()
+
+    def test_calls_wandb_init_when_api_key_present(self):
+        """init_wandb must call wandb.init when WANDB_API_KEY is set."""
+        mock_wandb = MagicMock()
+        with patch.dict("os.environ", {"WANDB_API_KEY": "fake-key"}, clear=False):
+            with patch.dict("sys.modules", {"wandb": mock_wandb}):
+                init_wandb("test_script", self._args())
+        mock_wandb.init.assert_called_once()
+
+    def test_defaults_to_cambridge_era_project(self):
+        """Default project must be 'cambridge_era'."""
+        mock_wandb = MagicMock()
+        with patch.dict("os.environ", {"WANDB_API_KEY": "fake-key"}, clear=False):
+            with patch.dict("sys.modules", {"wandb": mock_wandb}):
+                init_wandb("test_script", self._args())
+        assert mock_wandb.init.call_args.kwargs["project"] == "cambridge_era"
+
+    def test_script_name_used_as_tag(self):
+        """The script_name argument must appear in the tags list."""
+        mock_wandb = MagicMock()
+        with patch.dict("os.environ", {"WANDB_API_KEY": "fake-key"}, clear=False):
+            with patch.dict("sys.modules", {"wandb": mock_wandb}):
+                init_wandb("my_analysis_script", self._args())
+        assert "my_analysis_script" in mock_wandb.init.call_args.kwargs["tags"]
+
+    def test_run_group_from_env(self):
+        """WANDB_RUN_GROUP env var must be forwarded to wandb.init as group=."""
+        mock_wandb = MagicMock()
+        env = {"WANDB_API_KEY": "fake-key", "WANDB_RUN_GROUP": "pipeline_12345"}
+        with patch.dict("os.environ", env, clear=False):
+            with patch.dict("sys.modules", {"wandb": mock_wandb}):
+                init_wandb("test_script", self._args())
+        assert mock_wandb.init.call_args.kwargs["group"] == "pipeline_12345"
+
+    def test_no_run_group_when_env_absent(self):
+        """When WANDB_RUN_GROUP is not set, group must be None."""
+        mock_wandb = MagicMock()
+        with patch.dict("os.environ", {"WANDB_API_KEY": "fake-key"}, clear=True):
+            with patch.dict("sys.modules", {"wandb": mock_wandb}):
+                init_wandb("test_script", self._args())
+        assert mock_wandb.init.call_args.kwargs["group"] is None
+
+    def test_run_name_derived_from_outdir(self):
+        """Run name should be the last two non-root path segments of args.outdir."""
+        mock_wandb = MagicMock()
+        with patch.dict("os.environ", {"WANDB_API_KEY": "fake-key"}, clear=False):
+            with patch.dict("sys.modules", {"wandb": mock_wandb}):
+                init_wandb("test_script", self._args())
+        assert mock_wandb.init.call_args.kwargs["name"] == "comp_a__to__comp_b/weight_comparison"
+
+    def test_caller_project_override(self):
+        """Callers can supply their own project name via the project= argument."""
+        mock_wandb = MagicMock()
+        with patch.dict("os.environ", {"WANDB_API_KEY": "fake-key"}, clear=False):
+            with patch.dict("sys.modules", {"wandb": mock_wandb}):
+                init_wandb("test_script", self._args(), project="my_custom_project")
+        assert mock_wandb.init.call_args.kwargs["project"] == "my_custom_project"
+
+    def test_returns_none_when_wandb_not_installed(self):
+        """If wandb is not importable, init_wandb must return None without crashing."""
+        with patch.dict("os.environ", {"WANDB_API_KEY": "fake-key"}, clear=False):
+            with patch.dict("sys.modules", {"wandb": None}):
+                result = init_wandb("test_script", self._args())
+        assert result is None

@@ -26,10 +26,6 @@ export WANDB_RUN_GROUP="${WANDB_RUN_GROUP:-pipeline_$(date +%s)}"
 # Configuration — single output root for all results
 OUTROOT="${OUTROOT:-outputs}"
 
-# W&B project to log eval results to (optional — leave empty to skip logging)
-# e.g.  WANDB_PROJECT=cambridge_era ./experiment/pipeline.sh
-WANDB_PROJECT="${WANDB_PROJECT:-}"
-
 # Models (UNLEARNED can be overridden: UNLEARNED=user/model ./experiment/pipeline.sh)
 BASE="EleutherAI/deep-ignorance-unfiltered"
 FILTERED="EleutherAI/deep-ignorance-e2e-strong-filter"
@@ -143,15 +139,6 @@ echo "=========================================="
 echo "Quick sanity check — identifies collapsed models before expensive diagnostics."
 echo "(Results stored per-model, not per-comparison)"
 
-# Helper: build optional --wandb-project / --wandb-name args for eval.py
-# If WANDB_PROJECT is empty, produces nothing (no W&B logging).
-eval_wandb_args() {
-  local model_name="$1"
-  if [[ -n "$WANDB_PROJECT" ]]; then
-    echo "--wandb-project $WANDB_PROJECT --wandb-name ${model_name//\//_}"
-  fi
-}
-
 echo ""
 echo "Model: $BASE"
 echo "----------------------------------------"
@@ -161,8 +148,7 @@ else
   uv run experiment/eval.py \
     --model "$BASE" \
     --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE" \
-    $(eval_wandb_args "$BASE")
+    --dtype "$ACTIVATION_DTYPE"
 fi
 
 echo ""
@@ -174,8 +160,7 @@ else
   uv run experiment/eval.py \
     --model "$FILTERED" \
     --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE" \
-    $(eval_wandb_args "$FILTERED")
+    --dtype "$ACTIVATION_DTYPE"
 fi
 
 echo ""
@@ -187,8 +172,7 @@ else
   uv run experiment/eval.py \
     --model "$UNLEARNED" \
     --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE" \
-    $(eval_wandb_args "$UNLEARNED")
+    --dtype "$ACTIVATION_DTYPE"
 fi
 
 # ============================================

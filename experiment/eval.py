@@ -91,8 +91,6 @@ def main():
                         help="Max samples per task (default: full benchmark)")
     parser.add_argument("--batch-size", default="auto", help="Batch size (default: auto)")
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--wandb-project", type=str, default=None, help="W&B project to log results to")
-    parser.add_argument("--wandb-name", type=str, default=None, help="W&B run name")
     args = parser.parse_args()
 
     # Auto-derive outdir from model name if not specified
@@ -225,12 +223,13 @@ def main():
     print(f"         summary.json")
     print(f"         high_level_summary.md")
 
-    # Log to W&B if requested
-    if args.wandb_project:
+    # Log to W&B — always on if WANDB_API_KEY is available, silent skip otherwise.
+    _wandb_key = os.environ.get("WANDB_API_KEY", "")
+    if _wandb_key:
         try:
             import wandb
-            run_name = args.wandb_name or args.model
-            wandb.init(project=args.wandb_project, name=run_name, config=vars(args), tags=["eval"])
+            run_name = args.model.replace("/", "_")
+            wandb.init(project="cambridge_era", name=run_name, config=vars(args), tags=["eval"])
             flat = {}
             for task_name, task_results in results["results"].items():
                 for metric_key, value in task_results.items():
