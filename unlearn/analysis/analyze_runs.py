@@ -81,7 +81,7 @@ def main():
             "Loss":               run.summary.get("train/loss", None),
             # Sweep runs have method names like "/tar__", "/cb__", etc. in their name
             # Baselines are plain model runs without any method suffix
-            "IsBase":             not any(f"/{method}__" in run.name for method in ["tar", "cb", "rmu", "npo"]),
+            "IsBase":             not any(f"/{method}__" in run.name for method in ["tar", "cb", "rmu", "npo", "simnpo"]),
         })
 
     if not data:
