@@ -289,18 +289,18 @@ else
   echo "Comparisons 4–6: CB-only chain (skipped — set ENABLE_CB_COMPARISONS=1 to enable)"
 fi
 
-# ============================================
-# STEP 2: Generate Test Datasets
-# ============================================
-echo ""
-echo "=========================================="
-echo "STEP 2: Generating Test Datasets"
-echo "=========================================="
-if [[ -f "$FORGET" && -f "$RETAIN" && "$FORCE" != "1" ]]; then
-  echo "  ✓ Datasets already exist — skipping"
-else
-  uv run create_datasets.py
-fi
+# # ============================================
+# # STEP 2: Generate Test Datasets
+# # ============================================
+# echo ""
+# echo "=========================================="
+# echo "STEP 2: Generating Test Datasets"
+# echo "=========================================="
+# if [[ -f "$FORGET" && -f "$RETAIN" && "$FORCE" != "1" ]]; then
+#   echo "  ✓ Datasets already exist — skipping"
+# else
+#   uv run create_datasets.py
+# fi
 
 # ============================================
 # STEP 3: Activation Norms
