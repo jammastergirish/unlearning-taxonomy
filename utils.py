@@ -469,26 +469,24 @@ def _derive_run_name(script_name: str, args) -> str:
 
 
 def init_wandb(script_name: str, args, project: str = "cambridge_era", **kw):
-    """Initialise a W&B run.  No-ops gracefully if wandb is not installed or WANDB_MODE=disabled.
+    """Initialise a W&B run, logging to project "cambridge_era" by default.
 
-    The W&B project is resolved in priority order:
-      1. WANDB_PROJECT environment variable (set by pipeline.sh or the user)
-      2. The `project` argument passed by the caller
-      3. The hardcoded default "cambridge_era"
-    This means all experiment scripts automatically log to the right project
-    when launched via  WANDB_PROJECT=my_project ./experiment/pipeline.sh
-    without any changes to the individual scripts.
+    Silently no-ops if:
+      - wandb is not installed, or
+      - WANDB_API_KEY is not set in the environment (key absent from .env), or
+      - WANDB_MODE=disabled is set explicitly.
     """
     try:
         import wandb
     except ImportError:
         print(f"[wandb] wandb not installed — skipping logging for {script_name}")
         return None
-    resolved_project = os.environ.get("WANDB_PROJECT") or project
+    if not os.environ.get("WANDB_API_KEY"):
+        return None
     run_name = _derive_run_name(script_name, args)
     group = os.environ.get("WANDB_RUN_GROUP", None)
     run = wandb.init(
-        project=resolved_project,
+        project=project,
         name=run_name,
         config=vars(args) if hasattr(args, "__dict__") else {},
         group=group,
