@@ -80,8 +80,9 @@ def main():
             "WMDP (Categorized)": wmdp_3,
             "Loss":               run.summary.get("train/loss", None),
             # Sweep runs have method names like "/tar__", "/cb__", etc. in their name
+            # Some runs may use underscore instead of slash (e.g., "_simnpo__")
             # Baselines are plain model runs without any method suffix
-            "IsBase":             not any(f"/{method}__" in run.name for method in ["tar", "cb", "rmu", "npo", "simnpo"]),
+            "IsBase":             not any(f"/{method}__" in run.name or f"_{method}__" in run.name for method in ["tar", "cb", "rmu", "npo", "simnpo"]),
         })
 
     if not data:
