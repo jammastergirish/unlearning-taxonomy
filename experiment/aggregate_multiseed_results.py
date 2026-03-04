@@ -211,11 +211,9 @@ def plot_consolidated_activation_comparison(
     # Log the consolidated plots to W&B under a dedicated run
     try:
         import wandb
-        from utils import load_dotenv, log_plots, finish_wandb
+        from utils import load_dotenv, log_line_series, finish_wandb
         load_dotenv()
         if os.environ.get("WANDB_API_KEY"):
-            import argparse as _ap
-            _fake_args = _ap.Namespace(outdir=output_dir)
             wandb.init(
                 project="cambridge_era",
                 name=f"consolidated_activation/{model_b_label.split('/')[-1]}",
@@ -229,9 +227,47 @@ def plot_consolidated_activation_comparison(
                 },
                 reinit=True,
             )
-            log_plots(plot_outdir, "activation_comparison")
+            # Log native W&B line-series from the aggregated CSV
+            try:
+                import pandas as _pd
+                agg_df = _pd.read_csv(aggregated_csv)
+                agg_df = agg_df[agg_df["layer"] != "ALL_MEAN"]
+                agg_df["layer"] = agg_df["layer"].astype(int)
+                ma = model_a_label.split("/")[-1]
+                mb = model_b_label.split("/")[-1]
+                for split_name in ["forget", "retain"]:
+                    sub = agg_df[agg_df["split"] == split_name].sort_values("layer")
+                    if sub.empty:
+                        continue
+                    layers_list = sub["layer"].tolist()
+                    log_line_series(
+                        f"activation/{split_name}/absolute_norms",
+                        xs=layers_list,
+                        ys=[
+                            sub["model_a_l1_norm"].tolist(),
+                            sub["model_b_l1_norm"].tolist(),
+                            sub["model_a_l2_norm"].tolist(),
+                            sub["model_b_l2_norm"].tolist(),
+                        ],
+                        series_keys=[f"{ma} (L1)", f"{mb} (L1)", f"{ma} (L2)", f"{mb} (L2)"],
+                        title=f"Activation Norm by Layer ({split_name}, {num_seeds} seeds)",
+                        xname="Layer",
+                    )
+                    log_line_series(
+                        f"activation/{split_name}/diff_norms",
+                        xs=layers_list,
+                        ys=[
+                            sub["mean_diff_l1"].tolist(),
+                            sub["mean_diff_l2"].tolist(),
+                        ],
+                        series_keys=["Diff L1 norm", "Diff L2 norm"],
+                        title=f"Activation Difference Norm by Layer ({split_name}, {num_seeds} seeds)",
+                        xname="Layer",
+                    )
+            except Exception as _exc:
+                print(f"[aggregate] Warning: could not build W&B line charts: {_exc}")
             finish_wandb()
-            print(f"[aggregate] ✓ Logged consolidated plots to W&B (tag: consolidated_activation_comparison)")
+            print(f"[aggregate] ✓ Logged consolidated charts to W&B (tag: consolidated_activation_comparison)")
     except Exception as exc:
         print(f"[aggregate] W&B logging skipped: {exc}")
 

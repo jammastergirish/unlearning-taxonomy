@@ -52,7 +52,8 @@ from utils import (
     write_csv,
     init_wandb,
     log_csv_as_table,
-    log_plots,
+    log_line_series,
+    log_bar_chart,
     finish_wandb,
 )
 
@@ -478,7 +479,24 @@ def main():
     print(f"\n[wmdp_lens] ✓ Results saved to {args.outdir}")
     print(f"[wmdp_lens] Best layer: {best['layer']} (accuracy={best['accuracy']:.4f})")
     log_csv_as_table(os.path.join(args.outdir, "wmdp_lens_results.csv"), "wmdp_lens_results")
-    log_plots(args.outdir, "wmdp_lens")
+    # Log native W&B charts
+    layers_list = [r["layer"] for r in results]
+    accuracies = [r["accuracy"] for r in results]
+    log_line_series(
+        "wmdp_lens/accuracy_by_layer",
+        xs=layers_list,
+        ys=[accuracies],
+        series_keys=[f"{args.lens} lens"],
+        title=f"WMDP-Bio Accuracy by Layer ({args.lens} lens)",
+        xname="Layer",
+    )
+    deltas = [a - final_accuracy for a in accuracies]
+    log_bar_chart(
+        "wmdp_lens/accuracy_delta",
+        labels=[str(r["layer"]) for r in results],
+        values=deltas,
+        title="WMDP Accuracy Delta from Final Layer",
+    )
     finish_wandb()
 
 

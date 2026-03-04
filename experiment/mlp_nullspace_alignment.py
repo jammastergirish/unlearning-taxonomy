@@ -44,7 +44,9 @@ from utils import (
     classify_granular,
     init_wandb,
     log_csv_as_table,
-    log_plots,
+    log_line_series,
+    log_scatter,
+    log_histogram,
     finish_wandb,
     SmartLoader,
 )
@@ -397,7 +399,56 @@ def main():
     print(f"[mlp_nullspace_alignment] Updates are {'primarily off-manifold' if summary['primarily_off_manifold'] else 'mostly on-manifold'}")
     log_csv_as_table(os.path.join(args.outdir, "mlp_nullspace_metrics.csv"), "mlp_nullspace_metrics")
     log_csv_as_table(os.path.join(args.outdir, "layer_nullspace_summary.csv"), "layer_nullspace_summary")
-    log_plots(args.outdir, "mlp_nullspace")
+    # Log native W&B charts
+    if layer_results:
+        layers_list = [r["layer"] for r in layer_results]
+        log_line_series(
+            "nullspace/projection_ratios",
+            xs=layers_list,
+            ys=[
+                [r["avg_nullspace_ratio"] for r in layer_results],
+                [r["avg_colspace_ratio"] for r in layer_results],
+            ],
+            series_keys=["Null-space", "Column-space"],
+            title="Update Alignment by Layer (Higher Nullspace = Off-manifold)",
+            xname="Layer",
+        )
+        log_line_series(
+            "nullspace/encoder_vs_decoder",
+            xs=layers_list,
+            ys=[
+                [r["encoder_nullspace_ratio"] for r in layer_results],
+                [r["decoder_nullspace_ratio"] for r in layer_results],
+            ],
+            series_keys=["Encoder (Input)", "Decoder (Output)"],
+            title="Encoder vs Decoder Null-space Alignment by Layer",
+            xname="Layer",
+        )
+        log_line_series(
+            "nullspace/rank_increase",
+            xs=layers_list,
+            ys=[[r["avg_rank_increase"] for r in layer_results]],
+            series_keys=["Avg Rank Increase"],
+            title="Effective Rank Change (W → W+ΔW) by Layer",
+            xname="Layer",
+        )
+    if per_matrix_results:
+        nullspace_all = [r["nullspace_projection_ratio"] for r in per_matrix_results]
+        colspace_all = [r["colspace_projection_ratio"] for r in per_matrix_results]
+        rank_inc_all = [r["rank_increase"] for r in per_matrix_results]
+        log_scatter(
+            "nullspace/scatter_nullspace_vs_rank_increase",
+            xs=nullspace_all,
+            ys=rank_inc_all,
+            x_label="Nullspace Projection Ratio",
+            y_label="Rank Increase",
+            title="Null-space Alignment vs Rank Increase (per matrix)",
+        )
+        log_histogram(
+            "nullspace/projection_ratio_distributions",
+            {"Null-space": nullspace_all, "Column-space": colspace_all},
+            title="Distribution of Projection Ratios across all MLP Matrices",
+        )
     finish_wandb()
 
 

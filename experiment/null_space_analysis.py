@@ -46,7 +46,7 @@ from utils import (
     classify_granular,
     init_wandb,
     log_csv_as_table,
-    log_plots,
+    log_boxplot_as_table,
     finish_wandb,
     SmartLoader,
 )
@@ -370,7 +370,17 @@ def main():
 
     print(f"\n[null_space_analysis] ✓ Results saved to {args.outdir}")
     log_csv_as_table(os.path.join(args.outdir, "null_space_results.csv"), "null_space_results")
-    log_plots(args.outdir, "null_space")
+    # Log raw boxplot data so W&B can render interactive charts
+    log_boxplot_as_table(
+        "null_space/concentration",
+        {lbl: component_results[lbl]["null_space"] for lbl in COMPONENT_LABELS if component_results[lbl]["null_space"]},
+        title="Weight Change Concentration (top-10 SV variance ratio) by Component",
+    )
+    log_boxplot_as_table(
+        "null_space/subspace_alignment",
+        {lbl: component_results[lbl]["alignment"] for lbl in COMPONENT_LABELS if component_results[lbl]["alignment"]},
+        title="Original vs Fine-tuned Subspace Alignment by Component",
+    )
     finish_wandb()
 
 

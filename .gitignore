@@ -10,3 +10,6 @@ wandb/
 *.ipynb
 .ipynb_checkpoints/
 figs/
+# Local data files (too large for GitHub)
+data/forget.txt
+data/retain.txt

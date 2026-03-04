@@ -34,7 +34,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from utils import init_wandb, log_csv_as_table, log_plots, finish_wandb
+from utils import init_wandb, log_csv_as_table, log_line_series, log_bar_chart, finish_wandb
 
 
 # ---------------------------------------------------------------------------
@@ -271,7 +271,63 @@ def main():
 
     print(f"\n[analyze_mlp_vs_attn] ✓ Plots and summary saved to {args.outdir}")
     log_csv_as_table(os.path.join(args.outdir, "mlp_attn_summary.csv"), "mlp_attn_summary")
-    log_plots(args.outdir, "mlp_attn")
+    # Log native W&B charts from already-loaded DataFrames
+    mlp_data = per_layer_df[per_layer_df["group"] == "mlp"].sort_values("layer")
+    attn_data = per_layer_df[per_layer_df["group"] == "attn"].sort_values("layer")
+    if not mlp_data.empty and not attn_data.empty:
+        log_line_series(
+            "mlp_vs_attn/frobenius_norms",
+            xs=mlp_data["layer"].tolist(),
+            ys=[
+                mlp_data["dW_fro_layer"].tolist(),
+                attn_data["dW_fro_layer"].tolist(),
+            ],
+            series_keys=["MLP", "Attention"],
+            title="Weight Change Magnitude (Frobenius Norm) by Layer",
+            xname="Layer",
+        )
+        merged = mlp_data[["layer", "dW_fro_layer"]].merge(
+            attn_data[["layer", "dW_fro_layer"]], on="layer", suffixes=("_mlp", "_attn")
+        )
+        merged["ratio"] = merged["dW_fro_layer_mlp"] / (merged["dW_fro_layer_attn"] + 1e-10)
+        log_line_series(
+            "mlp_vs_attn/frobenius_ratio",
+            xs=merged["layer"].tolist(),
+            ys=[merged["ratio"].tolist()],
+            series_keys=["MLP / Attention"],
+            title="MLP / Attention Change Ratio by Layer",
+            xname="Layer",
+        )
+        log_bar_chart(
+            "mlp_vs_attn/total_change",
+            labels=["MLP", "Attention"],
+            values=[float(mlp_data["dW_fro_layer"].sum()), float(attn_data["dW_fro_layer"].sum())],
+            title="Total Weight Change by Component (sum of Frobenius norms)",
+        )
+        if "mean_dW_stable_rank" in per_layer_df.columns:
+            log_line_series(
+                "mlp_vs_attn/stable_rank",
+                xs=mlp_data["layer"].tolist(),
+                ys=[
+                    mlp_data["mean_dW_stable_rank"].tolist(),
+                    attn_data["mean_dW_stable_rank"].tolist(),
+                ],
+                series_keys=["MLP", "Attention"],
+                title="Stable Rank of Weight Changes by Layer",
+                xname="Layer",
+            )
+        if "mean_dW_empirical_rank" in per_layer_df.columns:
+            log_line_series(
+                "mlp_vs_attn/empirical_rank",
+                xs=mlp_data["layer"].tolist(),
+                ys=[
+                    mlp_data["mean_dW_empirical_rank"].tolist(),
+                    attn_data["mean_dW_empirical_rank"].tolist(),
+                ],
+                series_keys=["MLP", "Attention"],
+                title="Empirical Rank of Weight Changes by Layer",
+                xname="Layer",
+            )
     finish_wandb()
 
 
