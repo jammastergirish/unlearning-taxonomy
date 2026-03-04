@@ -11,6 +11,38 @@ from typing import Dict, List, Optional, Set
 import torch
 
 
+# --- Data utilities ---
+def ensure_datasets_exist() -> None:
+    """Ensure forget.txt and retain.txt datasets exist, create them if missing."""
+    data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+    forget_path = os.path.join(data_dir, "forget.txt")
+    retain_path = os.path.join(data_dir, "retain.txt")
+
+    # Check if both files exist
+    if os.path.exists(forget_path) and os.path.exists(retain_path):
+        return
+
+    # Create data directory if it doesn't exist
+    os.makedirs(data_dir, exist_ok=True)
+
+    # Run create_datasets.py to generate the files
+    create_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "create_datasets.py")
+    if os.path.exists(create_script):
+        print("[utils] Data files missing. Running create_datasets.py to generate them...")
+        import subprocess
+        try:
+            result = subprocess.run(["uv", "run", create_script],
+                                  capture_output=True, text=True, cwd=os.path.dirname(create_script))
+            if result.returncode == 0:
+                print("[utils] Datasets created successfully ✓")
+            else:
+                print(f"[utils] Warning: create_datasets.py failed: {result.stderr}")
+        except Exception as e:
+            print(f"[utils] Warning: Could not run create_datasets.py: {e}")
+    else:
+        print("[utils] Warning: data files missing and create_datasets.py not found")
+
+
 # --- Path utilities ---
 def model_outdir(model: str, root: str = "outputs", suffix: str = "") -> str:
     """Derive output directory from a HuggingFace model ID.

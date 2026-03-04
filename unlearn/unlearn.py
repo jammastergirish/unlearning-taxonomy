@@ -1297,6 +1297,10 @@ def build_outdir(args) -> str:
 # ===================================================================
 
 def main():
+    # Ensure datasets exist before starting
+    from utils import ensure_datasets_exist
+    ensure_datasets_exist()
+
     parser = argparse.ArgumentParser(description="Multi-method LLM Unlearning")
     parser.add_argument("--model", required=True, help="Base model (HF ID or local path)")
     parser.add_argument(

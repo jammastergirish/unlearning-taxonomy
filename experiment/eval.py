@@ -77,6 +77,10 @@ _CUSTOM_TASKS_DIR = os.path.join(_PROJECT_ROOT, "lm_eval_tasks")
 
 
 def main():
+    # Ensure datasets exist before starting (some custom eval tasks might need them)
+    from utils import ensure_datasets_exist
+    ensure_datasets_exist()
+
     parser = argparse.ArgumentParser(description="Run lm-evaluation-harness benchmarks.")
     parser.add_argument("--model", required=True, help="HuggingFace model ID or local path")
     parser.add_argument("--device", default="auto", help="Device (auto/cuda/mps/cpu)")
