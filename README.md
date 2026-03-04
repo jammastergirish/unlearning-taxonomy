@@ -172,7 +172,7 @@ graph TD
 ```
 
 ---
-
+<!-- 
 #### Step 0: Benchmark Evaluation (`experiment/eval.py`)
 
 **Question:** *Does the model still have general capabilities, and has it forgotten the target knowledge?*
@@ -190,7 +190,7 @@ The script automatically uses `device_map='auto'` with CPU offloading to handle 
 
 > **Note:** Results are stored **per-model** (not per-comparison) since benchmarks evaluate a single model's capabilities.
 
----
+--- -->
 
 #### Step 1: Parameter Statistics (`experiment/collect_weight_comparison.py`)
 

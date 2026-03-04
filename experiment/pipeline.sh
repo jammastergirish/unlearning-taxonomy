@@ -130,50 +130,50 @@ echo "Output root:   $OUTROOT"
 echo "Seeds:         $SEEDS  (for statistical robustness)"
 echo ""
 
-# ============================================
-# STEP 0: Benchmark Evaluation (per-model)
-# ============================================
-echo "=========================================="
-echo "STEP 0: Benchmark Evaluation (MMLU, WMDP, HellaSwag, TruthfulQA)"
-echo "=========================================="
-echo "Quick sanity check — identifies collapsed models before expensive diagnostics."
-echo "(Results stored per-model, not per-comparison)"
+# # ============================================
+# # STEP 0: Benchmark Evaluation (per-model)
+# # ============================================
+# echo "=========================================="
+# echo "STEP 0: Benchmark Evaluation (MMLU, WMDP, HellaSwag, TruthfulQA)"
+# echo "=========================================="
+# echo "Quick sanity check — identifies collapsed models before expensive diagnostics."
+# echo "(Results stored per-model, not per-comparison)"
 
-echo ""
-echo "Model: $BASE"
-echo "----------------------------------------"
-if step_complete "${OUTROOT}/${MODEL_BASE}/evals" "summary.json"; then
-  echo "  ✓ Already complete — skipping"
-else
-  uv run experiment/eval.py \
-    --model "$BASE" \
-    --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE"
-fi
+# echo ""
+# echo "Model: $BASE"
+# echo "----------------------------------------"
+# if step_complete "${OUTROOT}/${MODEL_BASE}/evals" "summary.json"; then
+#   echo "  ✓ Already complete — skipping"
+# else
+#   uv run experiment/eval.py \
+#     --model "$BASE" \
+#     --device "$ACTIVATION_DEVICE" \
+#     --dtype "$ACTIVATION_DTYPE"
+# fi
 
-echo ""
-echo "Model: $FILTERED"
-echo "----------------------------------------"
-if step_complete "${OUTROOT}/${MODEL_FILTERED}/evals" "summary.json"; then
-  echo "  ✓ Already complete — skipping"
-else
-  uv run experiment/eval.py \
-    --model "$FILTERED" \
-    --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE"
-fi
+# echo ""
+# echo "Model: $FILTERED"
+# echo "----------------------------------------"
+# if step_complete "${OUTROOT}/${MODEL_FILTERED}/evals" "summary.json"; then
+#   echo "  ✓ Already complete — skipping"
+# else
+#   uv run experiment/eval.py \
+#     --model "$FILTERED" \
+#     --device "$ACTIVATION_DEVICE" \
+#     --dtype "$ACTIVATION_DTYPE"
+# fi
 
-echo ""
-echo "Model: $UNLEARNED"
-echo "----------------------------------------"
-if step_complete "${OUTROOT}/${MODEL_UNLEARNED}/evals" "summary.json"; then
-  echo "  ✓ Already complete — skipping"
-else
-  uv run experiment/eval.py \
-    --model "$UNLEARNED" \
-    --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE"
-fi
+# echo ""
+# echo "Model: $UNLEARNED"
+# echo "----------------------------------------"
+# if step_complete "${OUTROOT}/${MODEL_UNLEARNED}/evals" "summary.json"; then
+#   echo "  ✓ Already complete — skipping"
+# else
+#   uv run experiment/eval.py \
+#     --model "$UNLEARNED" \
+#     --device "$ACTIVATION_DEVICE" \
+#     --dtype "$ACTIVATION_DTYPE"
+# fi
 
 # ============================================
 # STEP 1: Parameter Statistics & Weight Comparison
