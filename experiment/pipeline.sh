@@ -6,12 +6,8 @@ cd "$(dirname "$0")/.."
 
 clear && printf '\e[3J'
 
-# Ensure datasets exist before starting
-if [[ ! -f "data/forget.txt" || ! -f "data/retain.txt" ]]; then
-  echo "[pipeline] Data files missing. Running create_datasets.py to generate them..."
-  uv run create_datasets.py
-  echo "[pipeline] Datasets created successfully ✓"
-fi
+# Ensure datasets exist before starting (using the utils.py function)
+python3 -c "from utils import ensure_datasets_exist; ensure_datasets_exist()"
 
 # ---- Force flag: pass --force to rerun completed steps ----
 FORCE=0
