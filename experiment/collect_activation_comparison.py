@@ -259,7 +259,12 @@ def compute_activation_diffs(
 # ---------------------------------------------------------------------------
 def plot_activation_comparison(csv_path: str, outdir: str, title: str = None,
                               model_a: str = "Model A (before)", model_b: str = "Model B (after)"):
-    """Generate activation norm comparison plots from a per-layer CSV file."""
+    """Generate activation norm comparison plots from a per-layer CSV file.
+
+    When the CSV contains ``*_std`` columns (produced by the multi-seed
+    aggregator), shaded ±1 std error bands are drawn around each line.
+    Falls back to plain lines when no ``_std`` columns are present.
+    """
     import pandas as pd
     import matplotlib.pyplot as plt
 
@@ -269,53 +274,87 @@ def plot_activation_comparison(csv_path: str, outdir: str, title: str = None,
     dataframe = dataframe[dataframe["layer"] != "ALL_MEAN"]
     dataframe["layer"] = dataframe["layer"].astype(int)
 
-    print(f"[collect_activation_comparison] Generating plots from {csv_path} ({len(dataframe)} rows)")
+    # Detect whether the aggregated CSV contains std columns
+    has_std = any(c.endswith("_std") for c in dataframe.columns)
+
+    print(f"[collect_activation_comparison] Generating plots from {csv_path} "
+          f"({len(dataframe)} rows, error bars={'yes' if has_std else 'no'})")
+
+    def _get_std(sub: "pd.DataFrame", col: str) -> "pd.Series | None":
+        """Return the std series for *col* if available, else None."""
+        std_col = f"{col}_std"
+        return sub[std_col] if has_std and std_col in sub.columns else None
+
+    def _plot_line_with_band(ax, x, y, std, label, color, marker):
+        """Plot a line and, if std is given, a shaded ±1σ band."""
+        ax.plot(x, y, marker=marker, linewidth=1.5, label=label, color=color)
+        if std is not None:
+            ax.fill_between(x, y - std, y + std, alpha=0.2, color=color)
 
     for split in ["forget", "retain"]:
         sub = dataframe[dataframe["split"] == split].sort_values("layer")
         if sub.empty:
             continue
 
+        x = sub["layer"]
+
+        # ------------------------------------------------------------------
         # Plot 1: Absolute norms — L1 and L2 side-by-side, model A vs model B
+        # ------------------------------------------------------------------
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
 
-        ax1.plot(sub["layer"], sub["model_a_l1_norm"], marker="o", linewidth=1.5, label=model_a, color="tab:blue")
-        ax1.plot(sub["layer"], sub["model_b_l1_norm"], marker="s", linewidth=1.5, label=model_b, color="tab:orange")
+        _plot_line_with_band(ax1, x, sub["model_a_l1_norm"],
+                             _get_std(sub, "model_a_l1_norm"),
+                             label=model_a, color="tab:blue", marker="o")
+        _plot_line_with_band(ax1, x, sub["model_b_l1_norm"],
+                             _get_std(sub, "model_b_l1_norm"),
+                             label=model_b, color="tab:orange", marker="s")
         ax1.set_xlabel("Layer")
         ax1.set_ylabel(r"Mean $\|h\|_1$ per token")
         ax1.set_title(f"$L_1$ Activation Magnitude ({split})")
         ax1.legend()
         ax1.grid(alpha=0.3)
 
-        ax2.plot(sub["layer"], sub["model_a_l2_norm"], marker="o", linewidth=1.5, label=model_a, color="tab:blue")
-        ax2.plot(sub["layer"], sub["model_b_l2_norm"], marker="s", linewidth=1.5, label=model_b, color="tab:orange")
+        _plot_line_with_band(ax2, x, sub["model_a_l2_norm"],
+                             _get_std(sub, "model_a_l2_norm"),
+                             label=model_a, color="tab:blue", marker="o")
+        _plot_line_with_band(ax2, x, sub["model_b_l2_norm"],
+                             _get_std(sub, "model_b_l2_norm"),
+                             label=model_b, color="tab:orange", marker="s")
         ax2.set_xlabel("Layer")
         ax2.set_ylabel(r"Mean $\|h\|_2$ per token")
         ax2.set_title(f"$L_2$ Activation Magnitude ({split})")
         ax2.legend()
         ax2.grid(alpha=0.3)
 
-        fig.suptitle(title or "", fontsize=11)
+        suffix = " (mean ± 1σ)" if has_std else ""
+        fig.suptitle((title or "") + suffix, fontsize=11)
         plt.tight_layout()
         plt.savefig(os.path.join(outdir, f"activation_norms_{split}.png"))
         plt.close()
 
+        # ------------------------------------------------------------------
         # Plot 2: Activation diffs — L1 and L2 side-by-side
+        # ------------------------------------------------------------------
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
 
-        ax1.plot(sub["layer"], sub["mean_diff_l1"], marker="o", linewidth=1.5, color="tab:green")
+        _plot_line_with_band(ax1, x, sub["mean_diff_l1"],
+                             _get_std(sub, "mean_diff_l1"),
+                             label=None, color="tab:green", marker="o")
         ax1.set_xlabel("Layer")
         ax1.set_ylabel(r"Mean $\|\Delta h\|_1$ per token")
         ax1.set_title(f"Activation Diff $L_1$ Norm ({split})")
         ax1.grid(alpha=0.3)
 
-        ax2.plot(sub["layer"], sub["mean_diff_l2"], marker="o", linewidth=1.5, color="tab:red")
+        _plot_line_with_band(ax2, x, sub["mean_diff_l2"],
+                             _get_std(sub, "mean_diff_l2"),
+                             label=None, color="tab:red", marker="o")
         ax2.set_xlabel("Layer")
         ax2.set_ylabel(r"Mean $\|\Delta h\|_2$ per token")
         ax2.set_title(f"Activation Diff $L_2$ Norm ({split})")
         ax2.grid(alpha=0.3)
 
-        fig.suptitle(title or "", fontsize=11)
+        fig.suptitle((title or "") + suffix, fontsize=11)
         plt.tight_layout()
         plt.savefig(os.path.join(outdir, f"activation_diffs_{split}.png"))
         plt.close()

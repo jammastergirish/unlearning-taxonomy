@@ -528,3 +528,43 @@ class TestPlotActivationNorms:
         assert os.path.isfile(os.path.join(plot_outdir, "activation_diffs_forget.png"))
         assert os.path.isfile(os.path.join(plot_outdir, "activation_diffs_retain.png"))
 
+    def test_error_band_produces_png_files(self, temp_dir):
+        """Smoke test: plot_activation_comparison renders error bands when _std columns present."""
+        from collect_activation_comparison import plot_activation_comparison
+        from utils import write_csv
+
+        # Build aggregated CSV that includes _std columns (as produced by the aggregator)
+        csv_path = os.path.join(temp_dir, "activation_comparison_agg.csv")
+        fieldnames = [
+            "layer", "split",
+            "model_a_l1_norm", "model_a_l1_norm_std",
+            "model_a_l2_norm", "model_a_l2_norm_std",
+            "model_b_l1_norm", "model_b_l1_norm_std",
+            "model_b_l2_norm", "model_b_l2_norm_std",
+            "mean_diff_l1", "mean_diff_l1_std",
+            "mean_diff_l2", "mean_diff_l2_std",
+        ]
+        rows = []
+        for layer in range(4):
+            for split in ["forget", "retain"]:
+                rows.append({
+                    "layer": layer, "split": split,
+                    "model_a_l1_norm": 1.0 + layer, "model_a_l1_norm_std": 0.05,
+                    "model_a_l2_norm": 0.5 + layer, "model_a_l2_norm_std": 0.02,
+                    "model_b_l1_norm": 1.2 + layer, "model_b_l1_norm_std": 0.07,
+                    "model_b_l2_norm": 0.6 + layer, "model_b_l2_norm_std": 0.03,
+                    "mean_diff_l1": 0.2, "mean_diff_l1_std": 0.01,
+                    "mean_diff_l2": 0.1, "mean_diff_l2_std": 0.005,
+                })
+        write_csv(csv_path, rows, fieldnames)
+
+        plot_outdir = os.path.join(temp_dir, "plots_agg")
+        plot_activation_comparison(csv_path, plot_outdir, title="Test (3 seeds)")
+
+        # All 4 PNGs should still be produced even with _std columns present
+        assert os.path.isfile(os.path.join(plot_outdir, "activation_norms_forget.png"))
+        assert os.path.isfile(os.path.join(plot_outdir, "activation_norms_retain.png"))
+        assert os.path.isfile(os.path.join(plot_outdir, "activation_diffs_forget.png"))
+        assert os.path.isfile(os.path.join(plot_outdir, "activation_diffs_retain.png"))
+
+

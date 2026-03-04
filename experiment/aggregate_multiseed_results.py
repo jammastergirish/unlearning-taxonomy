@@ -3,6 +3,8 @@
 # dependencies = [
 #   "pandas",
 #   "numpy",
+#   "matplotlib",
+#   "wandb",
 # ]
 # ///
 """
@@ -24,12 +26,17 @@ Usage:
 import argparse
 import json
 import os
+import sys
 import pandas as pd
 import numpy as np
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 import shutil
 import warnings
+
+# Allow importing from project root and experiment/
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 def aggregate_csv_files(csv_paths: List[str], output_path: str) -> None:
     """Aggregate CSV files across seeds by computing mean and std for numeric columns."""
@@ -129,7 +136,12 @@ def aggregate_json_files(json_paths: List[str], output_path: str) -> None:
     print(f"Aggregated JSON saved to {output_path}")
 
 def copy_representative_plots(seed_dirs: List[str], output_dir: str) -> None:
-    """Copy plots from the first seed directory as representative plots."""
+    """Copy plots from the first seed directory as representative plots.
+
+    Note: for activation_comparison CSVs this is superseded by
+    plot_consolidated_activation_comparison(), which re-generates the plots
+    with proper error bands from the aggregated CSV.
+    """
     if not seed_dirs:
         return
 
@@ -145,6 +157,83 @@ def copy_representative_plots(seed_dirs: List[str], output_dir: str) -> None:
         os.makedirs(output_dir, exist_ok=True)
         shutil.copy2(png_file, dest_path)
         print(f"Copied representative plot: {dest_path}")
+
+
+def plot_consolidated_activation_comparison(
+    aggregated_csv: str,
+    output_dir: str,
+    seed_dirs: List[str],
+) -> None:
+    """Re-generate activation comparison plots from the aggregated (mean±std) CSV.
+
+    Unlike copy_representative_plots(), this produces shaded error-band charts
+    that visualise variance across seeds, then logs them to W&B under the tag
+    ``consolidated_activation_comparison``.
+    """
+    if not os.path.exists(aggregated_csv):
+        print(f"[aggregate] Skipping consolidated plots — {aggregated_csv} not found")
+        return
+
+    # Derive a plot output directory alongside the CSV
+    plot_outdir = os.path.join(output_dir, "consolidated_plots")
+    os.makedirs(plot_outdir, exist_ok=True)
+
+    # Pull model names from a seed's args (stored in the wandb config or as
+    # a best-effort from the directory name).  We fall back to generic labels
+    # when they cannot be determined.
+    model_a_label = "Model A (before)"
+    model_b_label = "Model B (after)"
+    # Try to infer from the output_dir path: .../MODEL_A__to__MODEL_B/...
+    for part in Path(output_dir).parts:
+        if "__to__" in part:
+            halves = part.split("__to__", 1)
+            model_a_label = halves[0].replace("_", "/", 1)  # un-sanitize first /
+            model_b_label = halves[1].replace("_", "/", 1)
+            break
+
+    num_seeds = len(seed_dirs)
+    title = f"{model_b_label}: Activation Norms ({num_seeds} seeds)"
+
+    try:
+        from collect_activation_comparison import plot_activation_comparison
+        plot_activation_comparison(
+            aggregated_csv,
+            plot_outdir,
+            title=title,
+            model_a=model_a_label,
+            model_b=model_b_label,
+        )
+        print(f"[aggregate] ✓ Consolidated error-band plots written to {plot_outdir}")
+    except Exception as exc:
+        print(f"[aggregate] Warning: could not generate consolidated plots: {exc}")
+        return
+
+    # Log the consolidated plots to W&B under a dedicated run
+    try:
+        import wandb
+        from utils import load_dotenv, log_plots, finish_wandb
+        load_dotenv()
+        if os.environ.get("WANDB_API_KEY"):
+            import argparse as _ap
+            _fake_args = _ap.Namespace(outdir=output_dir)
+            wandb.init(
+                project="cambridge_era",
+                name=f"consolidated_activation/{model_b_label.split('/')[-1]}",
+                tags=["consolidated_activation_comparison"],
+                config={
+                    "num_seeds": num_seeds,
+                    "seed_dirs": seed_dirs,
+                    "aggregated_csv": aggregated_csv,
+                    "model_a": model_a_label,
+                    "model_b": model_b_label,
+                },
+                reinit=True,
+            )
+            log_plots(plot_outdir, "activation_comparison")
+            finish_wandb()
+            print(f"[aggregate] ✓ Logged consolidated plots to W&B (tag: consolidated_activation_comparison)")
+    except Exception as exc:
+        print(f"[aggregate] W&B logging skipped: {exc}")
 
 def find_file_patterns(seed_dirs: List[str]) -> Dict[str, List[str]]:
     """Find common file patterns across seed directories."""
@@ -182,11 +271,15 @@ def main():
         print(f"  - {seed_dir}")
 
     # Process each file pattern
+    aggregated_activation_csv = None
     for filename, file_paths in file_patterns.items():
         output_path = os.path.join(args.output_dir, filename)
 
         if filename.endswith('.csv'):
             aggregate_csv_files(file_paths, output_path)
+            # Track activation_comparison.csv for consolidated plotting below
+            if filename == "activation_comparison.csv":
+                aggregated_activation_csv = output_path
         elif filename.endswith('.json'):
             aggregate_json_files(file_paths, output_path)
         elif filename.endswith('.png'):
@@ -199,8 +292,17 @@ def main():
                 shutil.copy2(file_paths[0], output_path)
                 print(f"Copied file: {output_path}")
 
-    # Copy representative plots from first seed
-    copy_representative_plots(args.seed_dirs, args.output_dir)
+    # Generate consolidated error-band plots for activation comparison.
+    # This supersedes copy_representative_plots() for activation data.
+    if aggregated_activation_csv:
+        plot_consolidated_activation_comparison(
+            aggregated_activation_csv,
+            args.output_dir,
+            args.seed_dirs,
+        )
+    else:
+        # For other analyses, fall back to copying seed-0 plots
+        copy_representative_plots(args.seed_dirs, args.output_dir)
 
     # Create sentinel file to mark completion
     sentinel_path = os.path.join(args.output_dir, args.sentinel_file)
