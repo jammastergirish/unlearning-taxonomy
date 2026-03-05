@@ -47,8 +47,7 @@ from utils import (
     write_csv,
     init_wandb,
     log_csv_as_table,
-    log_bar_chart,
-    log_histogram,
+    log_plots,
     finish_wandb,
 )
 
@@ -571,41 +570,7 @@ def main():
     print(f"[local_lipschitz] Retain Lipschitz change: {retain_lip_change:.3f}")
     print(f"[local_lipschitz] Forget became {forget_trend}")
     log_csv_as_table(os.path.join(args.outdir, "lipschitzness_summary.csv"), "lipschitzness_summary")
-    # Log native W&B charts
-    ma = args.model_a.split("/")[-1]
-    mb = args.model_b.split("/")[-1]
-    bar_labels = [f"Forget ({ma})", f"Retain ({ma})", f"Forget ({mb})", f"Retain ({mb})"]
-    log_bar_chart(
-        "lipschitzness/mean_lipschitz",
-        labels=bar_labels,
-        values=[float(np.mean(forget_lipschitz_a)), float(np.mean(retain_lipschitz_a)),
-                float(np.mean(forget_lipschitz_b)), float(np.mean(retain_lipschitz_b))],
-        title="Mean Local Lipschitz Constants",
-    )
-    log_bar_chart(
-        "lipschitzness/mean_gradient_norm",
-        labels=bar_labels,
-        values=[float(np.mean(forget_gradient_a)), float(np.mean(retain_gradient_a)),
-                float(np.mean(forget_gradient_b)), float(np.mean(retain_gradient_b))],
-        title="Mean Input Gradient Norms",
-    )
-    log_bar_chart(
-        "lipschitzness/mean_output_variance",
-        labels=bar_labels,
-        values=[float(np.mean(forget_variance_a)), float(np.mean(retain_variance_a)),
-                float(np.mean(forget_variance_b)), float(np.mean(retain_variance_b))],
-        title="Mean Output Variance Under Perturbation",
-    )
-    log_histogram(
-        "lipschitzness/lipschitz_distributions",
-        {
-            f"Forget ({ma})": list(forget_lipschitz_a),
-            f"Retain ({ma})": list(retain_lipschitz_a),
-            f"Forget ({mb})": list(forget_lipschitz_b),
-            f"Retain ({mb})": list(retain_lipschitz_b),
-        },
-        title="Distribution of Local Lipschitz Constants",
-    )
+    log_plots(args.outdir, "lipschitzness")
     finish_wandb()
 
 

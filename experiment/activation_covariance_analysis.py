@@ -48,7 +48,7 @@ from utils import (
     write_csv,
     init_wandb,
     log_csv_as_table,
-    log_line_series,
+    log_plots,
     finish_wandb,
 )
 
@@ -469,56 +469,7 @@ def main():
     print(f"[activation_covariance] Retain spectrum change (Wasserstein): {avg_retain_wasserstein:.3f}")
     print(f"[activation_covariance] Selectivity ratio: {summary['selective_ratio']:.2f}x")
     log_csv_as_table(os.path.join(args.outdir, "covariance_metrics.csv"), "covariance_metrics")
-    # Log native W&B line-series charts from the computed results
-    layers_list = [r["layer"] for r in results]
-    ma = args.model_a.split("/")[-1]
-    mb = args.model_b.split("/")[-1]
-    log_line_series(
-        "covariance/effective_rank",
-        xs=layers_list,
-        ys=[
-            [r["forget_eff_rank_a"] for r in results],
-            [r["forget_eff_rank_b"] for r in results],
-            [r["retain_eff_rank_a"] for r in results],
-            [r["retain_eff_rank_b"] for r in results],
-        ],
-        series_keys=[f"Forget ({ma})", f"Forget ({mb})", f"Retain ({ma})", f"Retain ({mb})"],
-        title="Effective Rank (99% variance) by Layer",
-        xname="Layer",
-    )
-    log_line_series(
-        "covariance/spectral_entropy_delta",
-        xs=layers_list,
-        ys=[
-            [r["forget_entropy_b"] - r["forget_entropy_a"] for r in results],
-            [r["retain_entropy_b"] - r["retain_entropy_a"] for r in results],
-        ],
-        series_keys=["Forget Δ", "Retain Δ"],
-        title="Change in Spectral Entropy (B − A) by Layer",
-        xname="Layer",
-    )
-    log_line_series(
-        "covariance/wasserstein_distance",
-        xs=layers_list,
-        ys=[
-            [r["forget_wasserstein"] for r in results],
-            [r["retain_wasserstein"] for r in results],
-        ],
-        series_keys=["Forget", "Retain"],
-        title="Spectrum Change (Wasserstein Distance, A → B) by Layer",
-        xname="Layer",
-    )
-    log_line_series(
-        "covariance/top10_eigenvalue_change",
-        xs=layers_list,
-        ys=[
-            [r["forget_top10_change"] for r in results],
-            [r["retain_top10_change"] for r in results],
-        ],
-        series_keys=["Forget", "Retain"],
-        title="Top-10 Eigenvalue Relative Change by Layer",
-        xname="Layer",
-    )
+    log_plots(args.outdir, "activation_covariance")
     finish_wandb()
 
 

@@ -51,7 +51,7 @@ from utils import (
     write_csv,
     init_wandb,
     log_csv_as_table,
-    log_line_series,
+    log_plots,
     finish_wandb,
 )
 
@@ -454,64 +454,7 @@ def main():
     print(f"[activation_separation] Average separation change (cosine): {summary['avg_cosine_change']:.3f}")
     print(f"[activation_separation] Maximum separation at layer {summary['max_separation_layer']}: {summary['max_separation_value']:.3f}")
     log_csv_as_table(os.path.join(args.outdir, "separation_metrics_model_a.csv"), "separation_metrics")
-    # Log native W&B line-series charts
-    layers_list = [r["layer"] for r in results_model_a]
-    ma = args.model_a.split("/")[-1]
-    mb = args.model_b.split("/")[-1]
-    log_line_series(
-        "separation/cosine_distance",
-        xs=layers_list,
-        ys=[
-            [r["cosine_distance"] for r in results_model_a],
-            [r["cosine_distance"] for r in results_model_b],
-        ],
-        series_keys=[f"{ma} (baseline)", f"{mb} (unlearned)"],
-        title="Forget/Retain Centroid Separation (Cosine) by Layer",
-        xname="Layer",
-    )
-    log_line_series(
-        "separation/linear_discriminability_auc",
-        xs=layers_list,
-        ys=[
-            [r["linear_discriminability_auc"] for r in results_model_a],
-            [r["linear_discriminability_auc"] for r in results_model_b],
-        ],
-        series_keys=[f"{ma} (baseline)", f"{mb} (unlearned)"],
-        title="Linear Discriminability AUC (Forget vs Retain) by Layer",
-        xname="Layer",
-    )
-    log_line_series(
-        "separation/variance_ratio",
-        xs=layers_list,
-        ys=[
-            [r["variance_ratio"] for r in results_model_a],
-            [r["variance_ratio"] for r in results_model_b],
-        ],
-        series_keys=[f"{ma} (baseline)", f"{mb} (unlearned)"],
-        title="Cluster Separation (Between/Within Variance Ratio) by Layer",
-        xname="Layer",
-    )
-    log_line_series(
-        "separation/centroid_norms",
-        xs=layers_list,
-        ys=[
-            [r["forget_centroid_norm"] for r in results_model_a],
-            [r["retain_centroid_norm"] for r in results_model_a],
-            [r["forget_centroid_norm"] for r in results_model_b],
-            [r["retain_centroid_norm"] for r in results_model_b],
-        ],
-        series_keys=[f"Forget ({ma})", f"Retain ({ma})", f"Forget ({mb})", f"Retain ({mb})"],
-        title="Activation Centroid L2 Norms by Layer",
-        xname="Layer",
-    )
-    log_line_series(
-        "separation/delta_cosine",
-        xs=layers_list,
-        ys=[delta_cosine],
-        series_keys=["Δ cosine (B − A)"],
-        title="Change in Forget/Retain Separation After Unlearning",
-        xname="Layer",
-    )
+    log_plots(args.outdir, "activation_separation")
     finish_wandb()
 
 

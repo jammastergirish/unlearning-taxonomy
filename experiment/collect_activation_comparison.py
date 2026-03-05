@@ -37,7 +37,7 @@ import torch
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from utils import comparison_outdir, resolve_device, resolve_dtype, write_csv, init_wandb, log_csv_as_table, log_line_series, finish_wandb
+from utils import comparison_outdir, resolve_device, resolve_dtype, write_csv, init_wandb, log_csv_as_table, log_plots, finish_wandb
 
 
 def read_lines(path: str, max_samples: int) -> List[str]:
@@ -484,42 +484,7 @@ def main():
     if args.plot_outdir:
         plot_activation_comparison(output_path, args.plot_outdir, args.title,
                                   model_a=args.model_a, model_b=args.model_b)
-
-    # Log native W&B line-series charts — one set per split
-    ma = args.model_a.split("/")[-1]
-    mb = args.model_b.split("/")[-1]
-    for split_name in ["forget", "retain"]:
-        split_rows = sorted(
-            [r for r in rows if r["split"] == split_name and r["layer"] != "ALL_MEAN"],
-            key=lambda r: int(r["layer"]),
-        )
-        if not split_rows:
-            continue
-        layers_list = [int(r["layer"]) for r in split_rows]
-        log_line_series(
-            f"activation/{split_name}/absolute_norms",
-            xs=layers_list,
-            ys=[
-                [r["model_a_l1_norm"] for r in split_rows],
-                [r["model_b_l1_norm"] for r in split_rows],
-                [r["model_a_l2_norm"] for r in split_rows],
-                [r["model_b_l2_norm"] for r in split_rows],
-            ],
-            series_keys=[f"{ma} (L1)", f"{mb} (L1)", f"{ma} (L2)", f"{mb} (L2)"],
-            title=f"Activation Norm by Layer ({split_name})",
-            xname="Layer",
-        )
-        log_line_series(
-            f"activation/{split_name}/diff_norms",
-            xs=layers_list,
-            ys=[
-                [r["mean_diff_l1"] for r in split_rows],
-                [r["mean_diff_l2"] for r in split_rows],
-            ],
-            series_keys=["Diff L1 norm", "Diff L2 norm"],
-            title=f"Activation Difference Norm by Layer ({split_name})",
-            xname="Layer",
-        )
+        log_plots(args.plot_outdir, "activation_plots")
 
     finish_wandb()
 

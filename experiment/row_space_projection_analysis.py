@@ -45,9 +45,7 @@ from utils import (
     extract_layer,
     init_wandb,
     log_csv_as_table,
-    log_line_series,
-    log_bar_chart,
-    log_scatter,
+    log_plots,
     finish_wandb,
     SmartLoader,
 )
@@ -506,37 +504,7 @@ def main():
         print(f"[row_space_projection] Selectivity: {summary['projection_ratio']:.2f}x more aligned with forget data")
         log_csv_as_table(os.path.join(args.outdir, "row_space_projections.csv"), "row_space_projections")
         log_csv_as_table(os.path.join(args.outdir, "layer_projection_summary.csv"), "layer_projection_summary")
-        # Log native W&B charts
-        if layer_results:
-            layers_list = [r["layer"] for r in layer_results]
-            log_line_series(
-                "row_space/projection_ratios",
-                xs=layers_list,
-                ys=[
-                    [r["avg_forget_proj"] for r in layer_results],
-                    [r["avg_retain_proj"] for r in layer_results],
-                ],
-                series_keys=["Forget", "Retain"],
-                title="Activation Projection onto Update Row Space by Layer",
-                xname="Layer",
-            )
-            log_bar_chart(
-                "row_space/differential_projection",
-                labels=[str(r["layer"]) for r in layer_results],
-                values=[r["avg_diff"] for r in layer_results],
-                title="Differential Projection Forget − Retain by Layer",
-            )
-        if per_weight_results:
-            forget_all = [r["forget_proj_ratio"] for r in per_weight_results]
-            retain_all = [r["retain_proj_ratio"] for r in per_weight_results]
-            log_scatter(
-                "row_space/forget_vs_retain_scatter",
-                xs=retain_all,
-                ys=forget_all,
-                x_label="Retain Projection Ratio",
-                y_label="Forget Projection Ratio",
-                title="Forget vs Retain Projections (per MLP weight matrix)",
-            )
+        log_plots(args.outdir, "row_space")
         finish_wandb()
 
 
