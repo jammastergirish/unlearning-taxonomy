@@ -1725,10 +1725,11 @@ def main():
         fp16=use_fp16,
         logging_strategy="steps",
         logging_steps=1,
-        # WandB is reported via our existing init_wandb() call above;
-        # set report_to="none" so the Trainer doesn't try to re-init it,
-        # but we override log() below to forward step metrics ourselves.
-        report_to="none",
+        # WandB: init_wandb() above already called wandb.init(), so the
+        # Trainer will detect the active run and reuse it — no double-init.
+        # This gives real-time per-step train/loss (and our custom component
+        # metrics from UnlearningTrainer.log()) on the W&B dashboard.
+        report_to="wandb",
         save_strategy="no",   # we do our own save after training
         eval_strategy="no",
         dataloader_num_workers=0,
@@ -1756,19 +1757,8 @@ def main():
 
     trainer.train()
 
-    # Forward the Trainer's logged metrics to WandB manually
-    # (since we used report_to="none" to let our init_wandb() own the run)
-    try:
-        import wandb
-        if wandb.run is not None and trainer.state.log_history:
-            for log_entry in trainer.state.log_history:
-                step = log_entry.get("step", None)
-                metrics = {f"train/{k}": v for k, v in log_entry.items()
-                           if k not in ("step", "epoch", "total_flos")}
-                if metrics and step is not None:
-                    wandb.log(metrics, step=step)
-    except Exception:
-        pass
+    # Training metrics (train/loss, forget_loss, retain_loss, etc.) are now
+    # forwarded to W&B in real-time via report_to="wandb" above.
 
     # ---- Post-training NLL evaluation on held-out split ----
     if eval_forget_batches and eval_retain_batches:

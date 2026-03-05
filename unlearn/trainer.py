@@ -124,6 +124,9 @@ class UnlearningTrainer(Trainer):
         self.retain_act_cache = retain_act_cache or []
         self.layer_ids = layer_ids or []
         self._step_idx = 0  # tracks which retain_act_cache entry to use
+        # Per-step component metrics to be flushed into W&B via log().
+        # compute_loss() populates this dict; log() drains it.
+        self._custom_metrics: dict = {}
 
         # Load loss functions once from the sibling unlearn.py file.
         # We can't do `from unlearn import ...` because unlearn.py is run as a
@@ -149,7 +152,41 @@ class UnlearningTrainer(Trainer):
             "cb_lat_loss":      _mod.cb_lat_loss,
             "wt_dist_loss":     _mod.wt_dist_loss,
             "wt_dist_reg_loss": _mod.wt_dist_reg_loss,
+            # primitives needed to decompose losses for W&B logging
+            "nll_loss":         _mod.nll_loss,
+            "avg_log_prob":     _mod.avg_log_prob,
         }
+
+    # ------------------------------------------------------------------
+    # W&B metric helpers
+    # ------------------------------------------------------------------
+
+    def log(self, logs: dict, **kwargs) -> None:
+        """Merge any per-step component metrics into every Trainer log call.
+
+        compute_loss() stashes per-component scalars in self._custom_metrics
+        (e.g. forget_loss, retain_loss).  The Trainer calls log() once per
+        logging step, so we drain that dict here and let the super() call
+        forward everything to W&B / console as usual.
+        """
+        if self._custom_metrics:
+            logs.update(self._custom_metrics)
+            self._custom_metrics = {}
+        super().log(logs, **kwargs)
+
+    def _record(self, **metrics):
+        """Store scalar metric values for the current step.
+
+        Converts tensors to Python floats so they are JSON-serialisable for
+        W&B.  Existing keys are overwritten (last write per step wins, which
+        is fine since compute_loss is called once per step).
+        """
+        for k, v in metrics.items():
+            self._custom_metrics[k] = v.item() if hasattr(v, "item") else float(v)
+
+    # ------------------------------------------------------------------
+    # Loss computation
+    # ------------------------------------------------------------------
 
     def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
         """Dispatch to the appropriate unlearning loss function.
@@ -186,26 +223,51 @@ class UnlearningTrainer(Trainer):
         cb_lat_loss      = self._loss_fns["cb_lat_loss"]
         wt_dist_loss     = self._loss_fns["wt_dist_loss"]
         wt_dist_reg_loss = self._loss_fns["wt_dist_reg_loss"]
+        nll_loss         = self._loss_fns.get("nll_loss")
+        avg_log_prob     = self._loss_fns.get("avg_log_prob")
 
         method = a.method
 
         if method == "ga_simple":
-            loss = ga_simple_loss(model, fb)
+            forget_nll = nll_loss(model, fb)
+            loss = -forget_nll
+            self._record(forget_loss=forget_nll)
 
         elif method == "ga":
-            loss = ga_loss(model, fb, rb, a.retain_weight)
+            forget_nll = nll_loss(model, fb)
+            retain_nll = nll_loss(model, rb)
+            loss = -forget_nll + a.retain_weight * retain_nll
+            self._record(forget_loss=forget_nll, retain_loss=retain_nll)
 
         elif method == "grad_diff":
-            loss = grad_diff_loss(model, fb, rb, a.forget_weight)
+            forget_nll = nll_loss(model, fb)
+            retain_nll = nll_loss(model, rb)
+            loss = retain_nll - a.forget_weight * forget_nll
+            self._record(forget_loss=forget_nll, retain_loss=retain_nll)
 
         elif method == "dpo":
             loss = dpo_loss(model, self.ref_model, fb, rb, a.beta)
 
         elif method == "npo":
-            loss = npo_loss(model, self.ref_model, fb, rb, a.beta, a.retain_weight)
+            # Recompute components for logging without an extra forward pass
+            lp_forget = avg_log_prob(model, fb)
+            with torch.no_grad():
+                import torch.nn.functional as _F
+                ref_lp = avg_log_prob(self.ref_model, fb)
+            npo_term = -(2.0 / a.beta) * _F.logsigmoid(
+                -a.beta * (lp_forget - ref_lp)
+            ).mean()
+            retain_nll = nll_loss(model, rb)
+            loss = npo_term + a.retain_weight * retain_nll
+            self._record(npo_term=npo_term, retain_loss=retain_nll)
 
         elif method == "simnpo":
-            loss = simnpo_loss(model, fb, rb, a.beta, a.retain_weight)
+            lp_forget = avg_log_prob(model, fb)
+            import torch.nn.functional as _F
+            simnpo_term = -(2.0 / a.beta) * _F.logsigmoid(-a.beta * lp_forget).mean()
+            retain_nll = nll_loss(model, rb)
+            loss = simnpo_term + a.retain_weight * retain_nll
+            self._record(simnpo_term=simnpo_term, retain_loss=retain_nll)
 
         elif method == "rmu":
             cache_entry = self.retain_act_cache[self._step_idx % len(self.retain_act_cache)]
