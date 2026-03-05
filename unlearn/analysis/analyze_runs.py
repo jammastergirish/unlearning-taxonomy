@@ -9,6 +9,8 @@
 # ///
 
 import wandb
+
+KNOWN_METHODS = ["tar", "cb", "rmu", "npo", "simnpo", "wt_dist", "ga", "grad_diff"]
 import pandas as pd
 from dotenv import load_dotenv
 
@@ -66,7 +68,7 @@ def main():
         if method == "unknown":
             import re
             # Match patterns like "/simnpo__" or "_simnpo__" in the run name
-            pattern = r'[/_](tar|cb|rmu|npo|simnpo|wt_dist|ga|grad_diff)__'
+            pattern = r'[/_](' + '|'.join(KNOWN_METHODS) + r')__'
             match = re.search(pattern, run.name)
             if match:
                 method = match.group(1)
@@ -91,7 +93,7 @@ def main():
             # Sweep runs have method names like "/tar__", "/cb__", etc. in their name
             # Some runs may use underscore instead of slash (e.g., "_simnpo__")
             # Baselines are plain model runs without any method suffix
-            "IsBase":             not any(f"/{method}__" in run.name or f"_{method}__" in run.name for method in ["tar", "cb", "rmu", "npo", "simnpo", "wt_dist"]),
+            "IsBase":             not any(f"/{m}__" in run.name or f"_{m}__" in run.name for m in KNOWN_METHODS),
         })
 
     if not data:
