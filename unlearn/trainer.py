@@ -161,7 +161,7 @@ class UnlearningTrainer(Trainer):
     # W&B metric helpers
     # ------------------------------------------------------------------
 
-    def log(self, logs: dict, **kwargs) -> None:
+    def log(self, logs: dict, *args, **kwargs) -> None:
         """Merge any per-step component metrics into every Trainer log call.
 
         compute_loss() stashes per-component scalars in self._custom_metrics
@@ -172,7 +172,7 @@ class UnlearningTrainer(Trainer):
         if self._custom_metrics:
             logs.update(self._custom_metrics)
             self._custom_metrics = {}
-        super().log(logs, **kwargs)
+        super().log(logs, *args, **kwargs)
 
     def _record(self, **metrics):
         """Store scalar metric values for the current step.
