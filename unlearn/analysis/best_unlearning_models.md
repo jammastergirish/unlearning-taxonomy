@@ -10,6 +10,15 @@
 
 *Ranked by Score = MMLU - WMDP (Robust)*
 
+### npo
+
+| Name | Score | MMLU | WMDP (Robust) | WMDP (Cloze) | WMDP (Categorized) |
+| --- | --- | --- | --- | --- | --- |
+| EleutherAI_deep-ignorance-unfiltered/npo__ep3_lr3e-05_bs32_b0.01_rw1.0_ml2048 | 0.0728 | 0.3159 | 0.2431 | 0.2584 | 0.2349 |
+| unlearned_models_EleutherAI_deep-ignorance-unfiltered_npo__ep3_lr3e-05_bs32_b0.01_rw1.0_ml2048 | 0.0728 | 0.3159 | 0.2431 | 0.2584 | 0.2349 |
+| EleutherAI_deep-ignorance-unfiltered/npo__ep4_lr3e-05_bs32_b0.01_rw1.0_ml2048 | 0.0650 | 0.3311 | 0.2661 | 0.2677 | 0.2569 |
+| unlearned_models_EleutherAI_deep-ignorance-unfiltered_npo__ep4_lr3e-05_bs32_b0.01_rw1.0_ml2048 | 0.0650 | 0.3311 | 0.2661 | 0.2677 | 0.2569 |
+
 ### simnpo
 
 | Name | Score | MMLU | WMDP (Robust) | WMDP (Cloze) | WMDP (Categorized) |
