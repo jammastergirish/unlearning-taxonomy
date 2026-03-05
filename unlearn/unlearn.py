@@ -11,12 +11,12 @@
 #
 # [tool.uv.sources]
 # torch = [
-#   { index = "pytorch-cu128" },
+#   { index = "pytorch-cu124" },
 # ]
 #
 # [[tool.uv.index]]
-# name = "pytorch-cu128"
-# url  = "https://download.pytorch.org/whl/cu128"
+# name = "pytorch-cu124"
+# url  = "https://download.pytorch.org/whl/cu124"
 # explicit = true
 # ///
 """
