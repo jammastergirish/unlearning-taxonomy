@@ -66,7 +66,7 @@ def main():
         if method == "unknown":
             import re
             # Match patterns like "/simnpo__" or "_simnpo__" in the run name
-            pattern = r'[/_](tar|cb|rmu|npo|simnpo)__'
+            pattern = r'[/_](tar|cb|rmu|npo|simnpo|wt_dist|ga|grad_diff)__'
             match = re.search(pattern, run.name)
             if match:
                 method = match.group(1)
@@ -122,7 +122,6 @@ def main():
         + "|" + df["WMDP (Robust)"].round(4).astype(str)
         + "|" + df["WMDP (Cloze)"].round(4).astype(str)
         + "|" + df["WMDP (Categorized)"].round(4).astype(str)
-        + "|" + df["Method"].astype(str)
     )
     df = (
         df.sort_values("_style")          # new-style (0) first
