@@ -472,6 +472,10 @@ However, more likely, you are going to want to sweep through various hyperparame
 # Run a comprehensive hyperparameter sweep across all methods (96 models evaluated)
 # This uses NO_SAVE=1 by default so the 14GB+ checkpoints aren't saved to disk.
 ./unlearn/sweep_unlearn.sh
+
+# On managed GPU hosts (RunPod, Lambda, Vast.ai) where the system Python already
+# has CUDA-enabled torch pre-installed, bypass uv's isolated venv entirely:
+PYTHON=python3 ./unlearn/parallel_sweep.sh ./unlearn/sweep_unlearn_kl_cb32.sh
 ```
 
 You can then [run the following](#evaluating-unlearned-models) which will create `best_unlearning_models.md` to help you work out which unlearned model is best (high MMLU, low WMDP).
