@@ -1493,9 +1493,21 @@ def main():
     #    accelerate is forced to spread weights across all visible GPUs rather
     #    than packing everything onto the first one.
     if args.device == "auto" and torch.cuda.is_available():
-        usable = filter_gpus_by_free_vram(min_free_gib=10.0)
-        os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(i) for i in usable)
-        print(f"[unlearn] Restricting to GPUs with ≥10 GiB free: {usable}")
+        # Only restrict CUDA_VISIBLE_DEVICES when:
+        #   a) it is NOT already set externally — cluster/MIG managers set it
+        #      themselves; overriding it causes cudaErrorDevicesUnavailable.
+        #   b) VRAM queries succeed — filter_gpus_by_free_vram returns None
+        #      when all mem_get_info calls fail (MIG / exclusive-process mode).
+        if os.environ.get("CUDA_VISIBLE_DEVICES"):
+            print(f"[unlearn] CUDA_VISIBLE_DEVICES already set to "
+                  f"'{os.environ['CUDA_VISIBLE_DEVICES']}'; not overriding.")
+            usable = None
+        else:
+            usable = filter_gpus_by_free_vram(min_free_gib=10.0)
+            if usable is not None:
+                os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(i) for i in usable)
+                print(f"[unlearn] Restricting to GPUs with ≥10 GiB free: {usable}")
+
 
         # Scale activation buffer with batch size (larger batches need more headroom).
         activation_buf_gib = max(8.0, args.batch_size * 0.4)
