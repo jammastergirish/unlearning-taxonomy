@@ -12,3 +12,4 @@ wandb/
 figs/
 data/forget.txt
 data/retain.txt
+/__pycache__
