@@ -32,12 +32,19 @@ FORCE="${FORCE:-0}"
 # Also accept --force as a positional argument
 if [[ "${2:-}" == "--force" ]]; then FORCE=1; fi
 
+# PYTHON controls how unlearn.py is invoked.
+# Default: 'uv run --script' (creates an isolated venv, installs deps from inline metadata).
+# Override with PYTHON=python3 to use the system Python directly — useful on machines
+# like RunPod where the system Python already has CUDA-enabled torch installed.
+# Example: PYTHON=python3 ./unlearn/run_unlearn.sh npo
+PYTHON="${PYTHON:-uv run --script}"
+
 echo "=== Unlearning: method=${METHOD}  model=${BASE} ==="
 
 # Check if this exact sweep config has already finished in W&B (skip when --force)
 if [[ "$FORCE" == "1" ]]; then
   echo "=== --force: skipping W&B idempotency check ==="
-elif uv run --script unlearn/unlearn.py \
+elif $PYTHON unlearn/unlearn.py \
   --model "$BASE" \
   --method "$METHOD" \
   --forget-data data/forget.txt \
@@ -75,7 +82,7 @@ elif uv run --script unlearn/unlearn.py \
   exit 0
 fi
 
-uv run --script unlearn/unlearn.py \
+$PYTHON unlearn/unlearn.py \
   --model "$BASE" \
   --method "$METHOD" \
   --forget-data data/forget.txt \

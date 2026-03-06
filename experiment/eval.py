@@ -23,7 +23,6 @@ Runs multiple benchmarks in a single pass (shared model load):
   Custom (vendored from EleutherAI/deep-ignorance):
     - wmdp_bio_robust_rewritten   robust MCQA with rewritten questions
     - wmdp_bio_cloze_verified     perplexity-based (no other choices visible)
-    - wmdp_bio_categorized_mcqa   MCQA broken down by threat category
 
 Output structure (e.g. --outdir outputs/model_name/evals):
   outputs/model_name/evals/
@@ -66,10 +65,8 @@ from utils import model_outdir, pick_best_gpu
 
 DEFAULT_TASKS = [
     "mmlu",                          # general capabilities (built-in)
-    "wikitext",                      # perplexity (built-in)
     "wmdp_bio_robust_rewritten",     # robust MCQA (custom)
     "wmdp_bio_cloze_verified",       # cloze / perplexity-based (custom)
-    "wmdp_bio_categorized_mcqa",     # MCQA by threat category (custom)
 ]
 
 # Resolve path to vendored custom task YAMLs (lm_eval_tasks/ in project root)
@@ -269,10 +266,6 @@ def _write_high_level_summary(results: dict, model: str, outdir: str) -> None:
     # Rows: (label, task_key, metric_key)
     rows = [
         ("MMLU",                       "mmlu",                       "acc,none"),
-        ("WikiText (word perplexity)",  "wikitext",                   "word_perplexity,none"),
-        ("WMDP Bio (categorized MCQ)",  "wmdp_bio_categorized_mcqa",  "acc,none"),
-        ("↳ Robust subset",            "wmdp_bio_robust",            "acc,none"),
-        ("↳ Shortcut subset",          "wmdp_bio_shortcut",          "acc,none"),
         ("WMDP Bio (cloze verified)",   "wmdp_bio_cloze_verified",    "acc_norm,none"),
         ("WMDP Bio (robust rewritten)", "wmdp_bio_robust_rewritten",  "acc,none"),
     ]

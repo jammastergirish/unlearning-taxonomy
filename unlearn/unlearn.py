@@ -8,6 +8,16 @@
 #     "wandb",
 #     "muon-optimizer @ git+https://github.com/KellerJordan/Muon",
 # ]
+#
+# [tool.uv.sources]
+# torch = [
+#   { index = "pytorch-cu124" },
+# ]
+#
+# [[tool.uv.index]]
+# name = "pytorch-cu124"
+# url  = "https://download.pytorch.org/whl/cu124"
+# explicit = true
 # ///
 """
 Multi-method LLM unlearning pipeline.
@@ -1391,26 +1401,67 @@ def main():
     #    accelerate is forced to spread weights across all visible GPUs rather
     #    than packing everything onto the first one.
     if args.device == "auto" and torch.cuda.is_available():
-        usable = filter_gpus_by_free_vram(min_free_gib=10.0)
-        os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(i) for i in usable)
-        print(f"[unlearn] Restricting to GPUs with ≥10 GiB free: {usable}")
+        # Only restrict CUDA_VISIBLE_DEVICES when:
+        #   a) it is NOT already set externally — cluster/MIG managers set it
+        #      themselves; overriding it causes cudaErrorDevicesUnavailable.
+        #   b) VRAM queries succeed — filter_gpus_by_free_vram returns None
+        #      when all mem_get_info calls fail (MIG / exclusive-process mode).
+        if os.environ.get("CUDA_VISIBLE_DEVICES"):
+            print(f"[unlearn] CUDA_VISIBLE_DEVICES already set to "
+                  f"'{os.environ['CUDA_VISIBLE_DEVICES']}'; not overriding.")
+            usable = None
+        else:
+            usable = filter_gpus_by_free_vram(min_free_gib=10.0)
+            if usable is not None:
+                os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(i) for i in usable)
+                print(f"[unlearn] Restricting to GPUs with ≥10 GiB free: {usable}")
 
-        # Scale activation buffer with batch size (larger batches need more headroom).
-        activation_buf_gib = max(8.0, args.batch_size * 0.4)
-        mm = compute_training_max_memory(
-            optimizer_state_multiplier=6.0,
-            activation_buffer_gib=activation_buf_gib,
-        )
-        device_map_kwargs = {"device_map": "auto", **({"max_memory": mm} if mm else {})}
+
+        if usable is not None:
+            # VRAM queryable: use device_map='auto' so accelerate can spread
+            # weights across GPUs and budget memory correctly.
+            activation_buf_gib = max(8.0, args.batch_size * 0.4)
+            mm = compute_training_max_memory(
+                optimizer_state_multiplier=6.0,
+                activation_buffer_gib=activation_buf_gib,
+            )
+            device_map_kwargs = {"device_map": "auto", **(({"max_memory": mm} if mm else {}))}
+        else:
+            # VRAM unqueryable (RunPod / MIG / exclusive-process quirks):
+            # accelerate's device_map='auto' also calls mem_get_info internally
+            # and silently falls back to CPU when it fails.  Skip it entirely;
+            # args.device != 'auto' path below will call model.to(device).
+            print("[unlearn] VRAM unqueryable - skipping device_map='auto', moving model to device manually.")
+            device_map_kwargs = {}
     else:
         device_map_kwargs = {}
     
     model = AutoModelForCausalLM.from_pretrained(
         args.model, torch_dtype=pt_dtype, trust_remote_code=True, **device_map_kwargs
     )
-    if args.device != "auto":
+    if args.device != "auto" or not device_map_kwargs:
         model.to(device)
     model.train()
+
+    # Reconcile `device` with where the model actually ended up.
+    # device_map='auto' may fall back to CPU if CUDA is unavailable; using
+    # next(model.parameters()).device ensures random_targets, retain caches,
+    # and all subsequent tensor ops use the same device as the model.
+    model_device = next(model.parameters()).device
+    if str(model_device) != device:
+        if "cuda" in device and str(model_device) == "cpu":
+            sys.exit(
+                "[unlearn] FATAL: CUDA was requested but the model loaded on CPU.\n"
+                "  PyTorch cannot initialise a CUDA compute context on this machine.\n"
+                "  Common causes:\n"
+                "    - Docker container started without --gpus all / nvidia-docker\n"
+                "    - NVIDIA Container Runtime not installed\n"
+                "    - GPU in exclusive-process mode held by another process\n"
+                "  Verify with: python3 -c \"import torch; print(torch.tensor([1.]).cuda())\"\n"
+                "  Training a 7B model on CPU would take hours. Aborting."
+            )
+        print(f"[unlearn] Note: model loaded on {model_device} (requested {device}); using {model_device}.")
+        device = str(model_device)
 
     # Enable gradient checkpointing to save GPU memory at the cost of
     # recomputing activations during the backward pass.
@@ -1502,8 +1553,13 @@ def main():
         # RMU/CB will push forget-set activations to align with these vectors.
         # Normalising ensures the direction is what matters, not magnitude.
         for lid in layer_ids:
-            random_targets[lid] = torch.randn(hidden_dim, device=device, dtype=pt_dtype)
-            random_targets[lid] = random_targets[lid] / random_targets[lid].norm()  # unit norm
+            # Create on CPU first, then move to the model's device.
+            # Some container setups (e.g. H200 with certain driver configs)
+            # fail on torch.randn(..., device='cuda:0') directly but succeed
+            # when transferring from CPU via .to(device) (cudaMemcpy path).
+            t = torch.randn(hidden_dim, dtype=pt_dtype)
+            t = t / t.norm()  # unit norm
+            random_targets[lid] = t.to(device)
 
         # Cache the retain-set activations from the ORIGINAL (pre-training)
         # model.  These become the targets that RMU/CB try to preserve.

@@ -275,38 +275,57 @@ def pick_best_gpu() -> int:
     return best_idx
 
 
-def filter_gpus_by_free_vram(min_free_gib: float = 10.0) -> list[int]:
+def filter_gpus_by_free_vram(min_free_gib: float = 10.0) -> list[int] | None:
     """Return GPU indices that have at least *min_free_gib* GiB of free VRAM.
 
-    When multiple processes are sharing a machine, some GPUs may be nearly
-    full.  Passing the returned list to CUDA_VISIBLE_DEVICES prevents
-    accelerate's device_map='auto' from placing model layers on those GPUs.
+    Returns None when VRAM cannot be queried at all (e.g. MIG mode,
+    exclusive-process mode, driver quirks on H200).  Callers should treat
+    None as "do not restrict CUDA_VISIBLE_DEVICES".
 
-    Falls back to [best_gpu_index] if no GPU meets the threshold, so that
-    training can still proceed (and surface a real OOM rather than silently
-    hang).
+    Falls back to [best_gpu_index] if GPUs can be queried but none meets the
+    threshold, so that training can still proceed.
     """
     if not torch.cuda.is_available():
         return []
     min_free_bytes = int(min_free_gib * 1024 ** 3)
     n = torch.cuda.device_count()
     usable = []
+    any_success = False
     for i in range(n):
         try:
             free, _ = torch.cuda.mem_get_info(i)
+            any_success = True
             if free >= min_free_bytes:
                 usable.append(i)
         except Exception:
             pass
-    if not usable:
-        # No GPU has enough free memory — pick the best one and warn
-        best = pick_best_gpu()
-        free_bytes, _ = torch.cuda.mem_get_info(best)
-        free_gib = free_bytes / 1024 ** 3
+
+    if not any_success:
+        # Could not query any GPU — MIG mode, exclusive-process mode, etc.
+        # Returning None signals to the caller: don't touch CUDA_VISIBLE_DEVICES.
         print(
-            f"[device] WARNING: No GPU has ≥ {min_free_gib:.0f} GiB free. "
-            f"Best GPU {best} has {free_gib:.1f} GiB free. Using it anyway."
+            "[device] WARNING: Could not query VRAM on any GPU "
+            "(MIG/exclusive-process mode?). Skipping CUDA_VISIBLE_DEVICES restriction."
         )
+        return None
+
+    if not usable:
+        # No GPU has enough free memory — pick the best one and warn.
+        # mem_get_info can raise on some systems (MIG mode, exclusive-process
+        # mode, driver quirks on H200, etc.) so wrap it defensively.
+        best = pick_best_gpu()
+        try:
+            free_bytes, _ = torch.cuda.mem_get_info(best)
+            free_gib = free_bytes / 1024 ** 3
+            print(
+                f"[device] WARNING: No GPU has ≥ {min_free_gib:.0f} GiB free. "
+                f"Best GPU {best} has {free_gib:.1f} GiB free. Using it anyway."
+            )
+        except Exception:
+            print(
+                f"[device] WARNING: No GPU has ≥ {min_free_gib:.0f} GiB free "
+                f"(could not query free VRAM). Using GPU {best} anyway."
+            )
         return [best]
     return usable
 
@@ -396,7 +415,7 @@ def resolve_device(device: str) -> str:
 def resolve_dtype(dtype: str, device: str) -> torch.dtype:
     """Resolve 'auto' dtype based on device, or parse explicit dtype string."""
     if dtype == "auto":
-        if device == "cuda":
+        if device.startswith("cuda"):
             return torch.bfloat16
         if device == "mps":
             return torch.float16
