@@ -73,25 +73,29 @@ def main():
             if match:
                 method = match.group(1)
 
-        mmlu   = run.summary.get("eval_bench/mmlu/acc",                     None)
-        wmdp_1 = run.summary.get("eval_bench/wmdp_bio_robust/acc",          None)
+        mmlu   = run.summary.get("eval_bench/mmlu/acc",                         None)
+        wmdp_1 = run.summary.get("eval_bench/wmdp_bio_robust/acc",              None)
         wmdp_2 = run.summary.get("eval_bench/wmdp_bio_cloze_verified/acc_norm", None)
+        wmdp_3 = run.summary.get("eval_bench/wmdp_bio_categorized_mcqa/acc",    None)
+        wmdp_4 = run.summary.get("eval_bench/wmdp_bio_robust_rewritten/acc",    None)
 
-        if mmlu is None and wmdp_1 is None and wmdp_2 is None:
+        if mmlu is None and wmdp_1 is None and wmdp_2 is None and wmdp_3 is None and wmdp_4 is None:
             continue
 
         data.append({
-            "Run ID":        run.id,
-            "Name":          run.name,
-            "Method":        method,
-            "MMLU":          mmlu,
-            "WMDP (Robust)": wmdp_1,
-            "WMDP (Cloze)":  wmdp_2,
-            "Loss":          run.summary.get("train/loss", None),
+            "Run ID":                  run.id,
+            "Name":                    run.name,
+            "Method":                  method,
+            "MMLU":                    mmlu,
+            "WMDP (Robust)":           wmdp_1,
+            "WMDP (Cloze)":            wmdp_2,
+            "WMDP (Categorized)":      wmdp_3,
+            "WMDP (Robust Rewritten)": wmdp_4,
+            "Loss":                    run.summary.get("train/loss", None),
             # Sweep runs have method names like "/tar__", "/cb__", etc. in their name
             # Some runs may use underscore instead of slash (e.g., "_simnpo__")
             # Baselines are plain model runs without any method suffix
-            "IsBase":        not any(f"/{m}__" in run.name or f"_{m}__" in run.name for m in KNOWN_METHODS),
+            "IsBase":             not any(f"/{m}__" in run.name or f"_{m}__" in run.name for m in KNOWN_METHODS),
         })
 
     if not data:
@@ -121,6 +125,8 @@ def main():
         df["MMLU"].round(4).astype(str)
         + "|" + df["WMDP (Robust)"].round(4).astype(str)
         + "|" + df["WMDP (Cloze)"].round(4).astype(str)
+        + "|" + df["WMDP (Categorized)"].round(4).astype(str)
+        + "|" + df["WMDP (Robust Rewritten)"].round(4).astype(str)
     )
     df = (
         df.sort_values("_style")          # new-style (0) first
@@ -136,7 +142,7 @@ def main():
 
     print(f"\nSuccessfully processed {len(df)} runs with evaluation metrics.\n")
 
-    cols = ["Name", "Score", "MMLU", "WMDP (Robust)", "WMDP (Cloze)"]
+    cols = ["Name", "Score", "MMLU", "WMDP (Robust)", "WMDP (Robust Rewritten)", "WMDP (Cloze)", "WMDP (Categorized)"]
 
     baselines_df = df[df["IsBase"]].sort_values("Name")
     sweeps_df    = df[~df["IsBase"]]
