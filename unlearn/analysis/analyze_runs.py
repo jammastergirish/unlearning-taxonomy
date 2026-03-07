@@ -182,7 +182,7 @@ def main():
             best = group.sort_values(
                 by=["Score", "MMLU"],
                 ascending=[False, False],
-            ).head(5)
+            )
             f.write(_md_table(best, cols) + "\n\n")
 
     print("Done!")
