@@ -66,6 +66,7 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | EleutherAI_deep-ignorance-unfiltered/grad_diff__ep3_lr3e-05_bs32_fw1.0_ml1024 | 0.0468 | 0.3533 | 0.3065 | 0.2433 | 0.2519 | 0.3354 |
 | EleutherAI_deep-ignorance-unfiltered/grad_diff__ep3_lr3e-05_bs32_fw2.0_ml1024 | 0.0145 | 0.2807 | 0.2661 | 0.2302 | 0.2361 | 0.2702 |
+| EleutherAI_deep-ignorance-unfiltered/grad_diff__ep3_lr3e-05_bs32_fw3.0_ml1024 | -0.0007 | 0.2712 | 0.2719 | 0.2330 | 0.2314 | 0.2726 |
 
 ### npo
 
@@ -103,15 +104,11 @@
 | EleutherAI_deep-ignorance-unfiltered/rmu__ep2_lr1e-05_bs32_a100.0_sc40.0_ly5-6-7_ml2048 | 0.0170 | 0.4501 | 0.4332 | 0.2717 | 0.3578 | 0.5255 |
 | EleutherAI_deep-ignorance-unfiltered/rmu__ep2_lr2e-05_bs32_a200.0_sc20.0_ly11-12-13_ml2048 | -0.0008 | 0.2458 | 0.2465 | 0.2310 | 0.2472 | 0.2553 |
 | EleutherAI_deep-ignorance-unfiltered/rmu__ep2_lr1.5e-05_bs32_a200.0_sc20.0_ly11-12-13_ml2048 | -0.0011 | 0.2835 | 0.2846 | 0.2491 | 0.3392 | 0.2773 |
-| EleutherAI_deep-ignorance-unfiltered/rmu__ep3_lr3e-05_bs32_a100.0_sc20.0_ly5-6-7_ml2048 | -0.0378 | 0.2295 | 0.2673 | 0.2651 | 0.2704 | 0.2467 |
 | EleutherAI_deep-ignorance-unfiltered/rmu__ep3_lr3e-05_bs32_a50.0_sc20.0_ly5-6-7_ml2048 | -0.0378 | 0.2295 | 0.2673 | 0.2651 | 0.2686 | 0.2467 |
+| EleutherAI_deep-ignorance-unfiltered/rmu__ep3_lr3e-05_bs32_a100.0_sc20.0_ly5-6-7_ml2048 | -0.0378 | 0.2295 | 0.2673 | 0.2651 | 0.2704 | 0.2467 |
 | EleutherAI_deep-ignorance-unfiltered/rmu__ep1_lr3e-05_bs32_a300.0_sc20.0_ly11-12-13_ml2048 | -0.0407 | 0.2300 | 0.2707 | 0.2647 | 0.2667 | 0.2506 |
 | EleutherAI_deep-ignorance-unfiltered/rmu__ep1_lr3e-05_bs32_a500.0_sc20.0_ly11-12-13_ml2048 | -0.0411 | 0.2297 | 0.2707 | 0.2647 | 0.2612 | 0.2506 |
-| EleutherAI_deep-ignorance-unfiltered/rmu__ep2_lr1e-05_bs32_a100.0_sc20.0_ly5-6-7_ml2048 | N/A | 0.4511 | N/A | 0.2713 | 0.3578 | N/A |
 | EleutherAI_deep-ignorance-unfiltered/rmu__ep1_lr1e-05_bs32_a100.0_sc20.0_ly5-6-7_ml2048 | N/A | 0.4504 | N/A | 0.2717 | 0.3634 | N/A |
-| EleutherAI_deep-ignorance-unfiltered/rmu__ep2_lr1e-05_bs32_a100.0_sc40.0_ly5-6-7_ml2048 | N/A | 0.4501 | N/A | 0.2717 | 0.3578 | N/A |
-| EleutherAI_deep-ignorance-unfiltered/rmu__ep2_lr1e-05_bs32_a100.0_sc20.0_ly5-6-7-11-12-13_ml2048 | N/A | 0.4345 | N/A | 0.2524 | 0.3606 | N/A |
-| EleutherAI_deep-ignorance-unfiltered/rmu__ep2_lr1e-05_bs32_a100.0_sc20.0_ly11-12-13_ml2048 | N/A | 0.4338 | N/A | 0.2503 | 0.3662 | N/A |
 
 ### simnpo
 
