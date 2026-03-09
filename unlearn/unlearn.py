@@ -1288,30 +1288,46 @@ PARAM_ABBREV: dict[str, str] = {
 }
 
 
-def save_training_config(args, outdir):
-    """Save a training_config.yaml alongside the model with all reproducibility info."""
-    import yaml
+def build_training_config(args):
+    """Build a config dict with all training hyperparameters and settings.
+
+    Used by both save_training_config (YAML) and W&B logging so that
+    every field is recorded in both places.
+    """
     config = {
         "base_model": args.model,
         "method": args.method,
+        "outdir": args.outdir,
         "seed": args.seed,
         "dtype": args.dtype,
         "max_length": args.max_length,
+        "optimizer": args.optimizer,
         "eval_split": args.eval_split,
+        "eval_interval": args.eval_interval,
         "grad_clip": args.grad_clip,
         "grad_accum_steps": args.grad_accum_steps,
-        "deterministic_algorithms": False,
-        "torch_version": torch.__version__,
-        "cuda_version": torch.version.cuda if torch.cuda.is_available() else None,
-        "cudnn_version": torch.backends.cudnn.version() if torch.cuda.is_available() else None,
-        "cudnn_deterministic": torch.backends.cudnn.deterministic,
-        "cudnn_benchmark": torch.backends.cudnn.benchmark,
         "forget_data": args.forget_data,
         "retain_data": args.retain_data,
         "max_lines": args.max_lines,
     }
     for param in METHOD_PARAMS[args.method]:
         config[param] = getattr(args, param)
+    return config
+
+
+def save_training_config(args, outdir):
+    """Save a training_config.yaml alongside the model with all reproducibility info."""
+    import yaml
+    config = build_training_config(args)
+    # Add environment info only relevant to the YAML artifact
+    config.update({
+        "deterministic_algorithms": False,
+        "torch_version": torch.__version__,
+        "cuda_version": torch.version.cuda if torch.cuda.is_available() else None,
+        "cudnn_version": torch.backends.cudnn.version() if torch.cuda.is_available() else None,
+        "cudnn_deterministic": torch.backends.cudnn.deterministic,
+        "cudnn_benchmark": torch.backends.cudnn.benchmark,
+    })
     os.makedirs(outdir, exist_ok=True)
     with open(os.path.join(outdir, "training_config.yaml"), "w") as f:
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
@@ -1508,22 +1524,7 @@ def main():
     # Log method-specific hyperparameters as a dedicated config group
     if run is not None:
         import wandb
-        hyperparameters = {
-            "model": args.model,
-            "method": args.method,
-            "outdir": args.outdir,
-            "seed": args.seed,
-            "optimizer": args.optimizer,
-            "grad_clip": args.grad_clip,
-            "grad_accum_steps": args.grad_accum_steps,
-            "eval_split": args.eval_split,
-            "eval_interval": args.eval_interval,
-            "forget_data": args.forget_data,
-            "retain_data": args.retain_data,
-        }
-        for param in METHOD_PARAMS[args.method]:
-            hyperparameters[param] = getattr(args, param)
-        wandb.config.update({"hyperparameters": hyperparameters})
+        wandb.config.update({"hyperparameters": build_training_config(args)})
 
     # ---- Setup ----
     device = resolve_device(args.device)
