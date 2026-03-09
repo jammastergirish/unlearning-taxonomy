@@ -653,6 +653,20 @@ def cb_loss(
     return loss
 
 
+def make_perturbation_hook(d):
+    """Create a forward hook that adds perturbation `d` to a layer's output.
+
+    Handles both plain tensor and tuple outputs (hidden_state, attention_weights, ...),
+    and moves `d` to the output's device for multi-GPU device_map="auto".
+    """
+    def hook_fn(module, input, output):
+        dd = d.to(output[0].device) if isinstance(output, tuple) else d.to(output.device)
+        if isinstance(output, tuple):
+            return ((output[0] + dd).to(output[0].dtype),) + output[1:]
+        return (output + dd).to(output.dtype)
+    return hook_fn
+
+
 # ---- LAT ---------------------------------------------------------------
 # Latent Adversarial Training operates differently from all the above:
 # it uses a *two-loop* (min-max) optimisation:
@@ -715,17 +729,6 @@ def lat_loss(
         handle = None
         hook_layer_idx = [0]
 
-        def make_hook(d):
-            """Create a hook that adds perturbation `d` to the layer output."""
-            def hook_fn(module, input, output):
-                # Some layers return tuples (hidden_state, attention_weights, ...)
-                # Move d to output's device for multi-GPU device_map="auto"
-                dd = d.to(output[0].device) if isinstance(output, tuple) else d.to(output.device)
-                if isinstance(output, tuple):
-                    return ((output[0] + dd).to(output[0].dtype),) + output[1:]
-                return (output + dd).to(output.dtype)
-            return hook_fn
-
         # Find the target layer module in the model’s architecture.
         # Different HF model families use different attribute paths:
         #   - LLaMA/Mistral: model.layers
@@ -750,7 +753,7 @@ def lat_loss(
             return -nll_loss(model, forget_batch) + nll_loss(model, retain_batch)
 
         # Register the hook to inject δ into the target layer
-        handle = layers[target_lid].register_forward_hook(make_hook(delta))
+        handle = layers[target_lid].register_forward_hook(make_perturbation_hook(delta))
 
         # Forward pass with perturbation active
         out = model(
@@ -776,7 +779,7 @@ def lat_loss(
     # --- Outer loop: train model with the optimal (frozen) perturbation ---
     # The adversary found the best δ; now train the model to resist it.
     delta = delta.detach()  # freeze perturbation (no more adversary updates)
-    handle = layers[target_lid].register_forward_hook(make_hook(delta))
+    handle = layers[target_lid].register_forward_hook(make_perturbation_hook(delta))
 
     # Forget loss WITH perturbation (gradient ascent — maximize NLL)
     forget_loss = -nll_loss(model, forget_batch)
@@ -853,18 +856,8 @@ def cb_lat_loss(
     model_dtype = next(model.parameters()).dtype
     delta = torch.zeros(hidden_shape, device=hidden_device, dtype=model_dtype, requires_grad=True)
 
-    def make_hook(d):
-        """Hook that injects perturbation `d` into a layer’s output."""
-        def hook_fn(module, input, output):
-            # Move d to output’s device for multi-GPU device_map="auto"
-            dd = d.to(output[0].device) if isinstance(output, tuple) else d.to(output.device)
-            if isinstance(output, tuple):
-                return ((output[0] + dd).to(output[0].dtype),) + output[1:]
-            return (output + dd).to(output.dtype)
-        return hook_fn
-
     for _ in range(lat_steps):
-        handle = layers[target_lid].register_forward_hook(make_hook(delta))
+        handle = layers[target_lid].register_forward_hook(make_perturbation_hook(delta))
         out = model(input_ids=forget_batch["input_ids"],
                     attention_mask=forget_batch["attention_mask"])
         logits = out.logits[:, :-1, :].contiguous()
@@ -883,7 +876,7 @@ def cb_lat_loss(
     # This is the key difference from plain CB: the forget activations have
     # been perturbed by the adversary, so the model must reroute *despite* that.
     delta = delta.detach()
-    handle = layers[target_lid].register_forward_hook(make_hook(delta))
+    handle = layers[target_lid].register_forward_hook(make_perturbation_hook(delta))
 
     # Get perturbed forget activations (with δ injected at the target layer)
     forget_acts = get_layer_activations(model, forget_batch, layer_ids)
@@ -1295,34 +1288,74 @@ PARAM_ABBREV: dict[str, str] = {
 }
 
 
-def save_training_config(args, outdir):
-    """Save a training_config.yaml alongside the model with all reproducibility info."""
-    import yaml
+def build_training_config(args):
+    """Build a config dict with all training hyperparameters and settings.
+
+    Used by both save_training_config (YAML) and W&B logging so that
+    every field is recorded in both places.
+    """
     config = {
         "base_model": args.model,
         "method": args.method,
+        "outdir": args.outdir,
         "seed": args.seed,
         "dtype": args.dtype,
         "max_length": args.max_length,
+        "optimizer": args.optimizer,
         "eval_split": args.eval_split,
+        "eval_interval": args.eval_interval,
         "grad_clip": args.grad_clip,
         "grad_accum_steps": args.grad_accum_steps,
-        "deterministic_algorithms": False,
-        "torch_version": torch.__version__,
-        "cuda_version": torch.version.cuda if torch.cuda.is_available() else None,
-        "cudnn_version": torch.backends.cudnn.version() if torch.cuda.is_available() else None,
-        "cudnn_deterministic": torch.backends.cudnn.deterministic,
-        "cudnn_benchmark": torch.backends.cudnn.benchmark,
         "forget_data": args.forget_data,
         "retain_data": args.retain_data,
         "max_lines": args.max_lines,
     }
     for param in METHOD_PARAMS[args.method]:
         config[param] = getattr(args, param)
+    return config
+
+
+def save_training_config(args, outdir):
+    """Save a training_config.yaml alongside the model with all reproducibility info."""
+    import yaml
+    config = build_training_config(args)
+    # Add environment info only relevant to the YAML artifact
+    config.update({
+        "deterministic_algorithms": False,
+        "torch_version": torch.__version__,
+        "cuda_version": torch.version.cuda if torch.cuda.is_available() else None,
+        "cudnn_version": torch.backends.cudnn.version() if torch.cuda.is_available() else None,
+        "cudnn_deterministic": torch.backends.cudnn.deterministic,
+        "cudnn_benchmark": torch.backends.cudnn.benchmark,
+    })
     os.makedirs(outdir, exist_ok=True)
     with open(os.path.join(outdir, "training_config.yaml"), "w") as f:
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
     print(f"[unlearn] Training config saved to {outdir}/training_config.yaml")
+
+
+def compute_weight_distance(model, base_state):
+    """Compute L2 weight distance from base model, overall and per-layer.
+
+    Returns (l2_dist, layer_l2) where layer_l2 maps layer index to its L2 distance.
+    """
+    l2_dist = 0.0
+    layer_l2 = {}
+    for k, v in model.state_dict().items():
+        if k in base_state:
+            diff = v.detach().float().cpu() - base_state[k]
+            param_l2_sq = (diff ** 2).sum().item()
+            l2_dist += param_l2_sq
+            parts = k.split(".")
+            for i, p in enumerate(parts):
+                if p == "layers" and i + 1 < len(parts) and parts[i + 1].isdigit():
+                    lid = int(parts[i + 1])
+                    layer_l2[lid] = layer_l2.get(lid, 0.0) + param_l2_sq
+                    break
+    l2_dist = l2_dist ** 0.5
+    layer_l2 = {lid: sq ** 0.5 for lid, sq in sorted(layer_l2.items())}
+    return l2_dist, layer_l2
+
 
 
 def build_outdir(args) -> str:
@@ -1492,22 +1525,7 @@ def main():
     # Log method-specific hyperparameters as a dedicated config group
     if run is not None:
         import wandb
-        hyperparameters = {
-            "model": args.model,
-            "method": args.method,
-            "outdir": args.outdir,
-            "seed": args.seed,
-            "optimizer": args.optimizer,
-            "grad_clip": args.grad_clip,
-            "grad_accum_steps": args.grad_accum_steps,
-            "eval_split": args.eval_split,
-            "eval_interval": args.eval_interval,
-            "forget_data": args.forget_data,
-            "retain_data": args.retain_data,
-        }
-        for param in METHOD_PARAMS[args.method]:
-            hyperparameters[param] = getattr(args, param)
-        wandb.config.update({"hyperparameters": hyperparameters})
+        wandb.config.update({"hyperparameters": build_training_config(args)})
 
     # ---- Setup ----
     device = resolve_device(args.device)
@@ -1760,21 +1778,7 @@ def main():
 
         # L2 weight distance
         if base_state is not None:
-            l2_dist = 0.0
-            layer_l2 = {}
-            for k, v in model.state_dict().items():
-                if k in base_state:
-                    diff = v.detach().float().cpu() - base_state[k]
-                    param_l2_sq = (diff ** 2).sum().item()
-                    l2_dist += param_l2_sq
-                    parts = k.split(".")
-                    for i, p in enumerate(parts):
-                        if p == "layers" and i + 1 < len(parts) and parts[i + 1].isdigit():
-                            lid = int(parts[i + 1])
-                            layer_l2[lid] = layer_l2.get(lid, 0.0) + param_l2_sq
-                            break
-            l2_dist = l2_dist ** 0.5
-            layer_l2 = {lid: sq ** 0.5 for lid, sq in sorted(layer_l2.items())}
+            l2_dist, layer_l2 = compute_weight_distance(model, base_state)
             print(f"[unlearn] TAR L2 weight distance from base model: {l2_dist:.4f}")
             print(f"[unlearn] TAR Per-layer L2: {' '.join(f'L{lid}={d:.3f}' for lid, d in layer_l2.items())}")
             del base_state
@@ -1933,22 +1937,7 @@ def main():
 
     # ---- Weight distance from base model ----
     if base_state is not None:
-        l2_dist = 0.0
-        layer_l2 = {}  # per-layer L2 distance
-        for k, v in model.state_dict().items():
-            if k in base_state:
-                diff = v.detach().float().cpu() - base_state[k]
-                param_l2_sq = (diff ** 2).sum().item()
-                l2_dist += param_l2_sq
-                # Extract layer index (e.g. "model.layers.13.self_attn.q_proj.weight" -> 13)
-                parts = k.split(".")
-                for i, p in enumerate(parts):
-                    if p == "layers" and i + 1 < len(parts) and parts[i + 1].isdigit():
-                        lid = int(parts[i + 1])
-                        layer_l2[lid] = layer_l2.get(lid, 0.0) + param_l2_sq
-                        break
-        l2_dist = l2_dist ** 0.5
-        layer_l2 = {lid: sq ** 0.5 for lid, sq in sorted(layer_l2.items())}
+        l2_dist, layer_l2 = compute_weight_distance(model, base_state)
         print(f"[unlearn] L2 weight distance from base model: {l2_dist:.4f}")
         print(f"[unlearn] Per-layer L2: {' '.join(f'L{lid}={d:.3f}' for lid, d in layer_l2.items())}")
         try:
