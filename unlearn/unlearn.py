@@ -700,11 +700,13 @@ def lat_loss(
         )
         # Pick the middle target layer for perturbation (a heuristic choice)
         target_lid = layer_ids[len(layer_ids) // 2]
-        hidden_shape = out.hidden_states[target_lid + 1].shape  # (B, T, D)
+        target_hidden = out.hidden_states[target_lid + 1]
+        hidden_shape = target_hidden.shape  # (B, T, D)
+        hidden_device = target_hidden.device  # actual device of target layer
 
     # --- Inner loop: PGD to find adversarial perturbation δ ---
     # δ starts as zeros and is iteratively updated via signed gradients
-    delta = torch.zeros(hidden_shape, device=device, dtype=model_dtype, requires_grad=True)
+    delta = torch.zeros(hidden_shape, device=hidden_device, dtype=model_dtype, requires_grad=True)
 
     for _adv_step in range(lat_steps):
         # PyTorch "forward hooks" let us intercept & modify a layer’s
@@ -717,9 +719,11 @@ def lat_loss(
             """Create a hook that adds perturbation `d` to the layer output."""
             def hook_fn(module, input, output):
                 # Some layers return tuples (hidden_state, attention_weights, ...)
+                # Move d to output's device for multi-GPU device_map="auto"
+                dd = d.to(output[0].device) if isinstance(output, tuple) else d.to(output.device)
                 if isinstance(output, tuple):
-                    return ((output[0] + d).to(output[0].dtype),) + output[1:]
-                return (output + d).to(output.dtype)
+                    return ((output[0] + dd).to(output[0].dtype),) + output[1:]
+                return (output + dd).to(output.dtype)
             return hook_fn
 
         # Find the target layer module in the model’s architecture.
@@ -841,18 +845,22 @@ def cb_lat_loss(
         out = model(input_ids=forget_batch["input_ids"],
                     attention_mask=forget_batch["attention_mask"],
                     output_hidden_states=True)
-        hidden_shape = out.hidden_states[target_lid + 1].shape
+        target_hidden = out.hidden_states[target_lid + 1]
+        hidden_shape = target_hidden.shape
+        hidden_device = target_hidden.device  # actual device of target layer
 
     # Inner loop: PGD adversarial perturbation (identical to LAT inner loop)
     model_dtype = next(model.parameters()).dtype
-    delta = torch.zeros(hidden_shape, device=device, dtype=model_dtype, requires_grad=True)
+    delta = torch.zeros(hidden_shape, device=hidden_device, dtype=model_dtype, requires_grad=True)
 
     def make_hook(d):
         """Hook that injects perturbation `d` into a layer’s output."""
         def hook_fn(module, input, output):
+            # Move d to output’s device for multi-GPU device_map="auto"
+            dd = d.to(output[0].device) if isinstance(output, tuple) else d.to(output.device)
             if isinstance(output, tuple):
-                return ((output[0] + d).to(output[0].dtype),) + output[1:]
-            return (output + d).to(output.dtype)
+                return ((output[0] + dd).to(output[0].dtype),) + output[1:]
+            return (output + dd).to(output.dtype)
         return hook_fn
 
     for _ in range(lat_steps):
@@ -1286,6 +1294,36 @@ PARAM_ABBREV: dict[str, str] = {
 }
 
 
+def save_training_config(args, outdir):
+    """Save a training_config.yaml alongside the model with all reproducibility info."""
+    import yaml
+    config = {
+        "base_model": args.model,
+        "method": args.method,
+        "seed": args.seed,
+        "dtype": args.dtype,
+        "max_length": args.max_length,
+        "eval_split": args.eval_split,
+        "grad_clip": args.grad_clip,
+        "grad_accum_steps": args.grad_accum_steps,
+        "deterministic_algorithms": False,
+        "torch_version": torch.__version__,
+        "cuda_version": torch.version.cuda if torch.cuda.is_available() else None,
+        "cudnn_version": torch.backends.cudnn.version() if torch.cuda.is_available() else None,
+        "cudnn_deterministic": torch.backends.cudnn.deterministic,
+        "cudnn_benchmark": torch.backends.cudnn.benchmark,
+        "forget_data": args.forget_data,
+        "retain_data": args.retain_data,
+        "max_lines": args.max_lines,
+    }
+    for param in METHOD_PARAMS[args.method]:
+        config[param] = getattr(args, param)
+    os.makedirs(outdir, exist_ok=True)
+    with open(os.path.join(outdir, "training_config.yaml"), "w") as f:
+        yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+    print(f"[unlearn] Training config saved to {outdir}/training_config.yaml")
+
+
 def build_outdir(args) -> str:
     """Build the output directory path from the method and its relevant parameters."""
     method = args.method
@@ -1547,6 +1585,10 @@ def main():
     )
     if args.device != "auto" or not device_map_kwargs:
         model.to(device)
+
+    # Snapshot base weights for L2 distance measurement after training
+    base_state = {k: v.detach().clone().float().cpu() for k, v in model.state_dict().items()}
+
     model.train()
 
     # Reconcile `device` with where the model actually ended up.
@@ -1631,7 +1673,7 @@ def main():
 
     # Each step pairs one forget batch with one retain batch, so the total
     # steps per epoch is limited by whichever dataset has fewer batches.
-    n_steps = min(len(forget_batches), len(retain_batches))
+    n_steps = min(32, len(forget_batches), len(retain_batches))
     print(f"[unlearn]   steps/epoch: {n_steps}")
 
     # ---- RMU / CB / LAT setup: cache retain activations + random targets ----
@@ -1708,6 +1750,46 @@ def main():
             final_metrics = run_validation(model, eval_forget_batches, eval_retain_batches, 0, 0, device)
             print(f"[FINAL] TAR metrics: {final_metrics}")
 
+        # NLL eval
+        model.eval()
+        with torch.no_grad():
+            eval_device = device if not hasattr(model, 'hf_device_map') else 'cuda' if torch.cuda.is_available() else 'cpu'
+            forget_nll = sum(nll_loss(model, {k: v.to(eval_device) for k, v in b.items()}).item() for b in eval_forget_batches) / len(eval_forget_batches)
+            retain_nll = sum(nll_loss(model, {k: v.to(eval_device) for k, v in b.items()}).item() for b in eval_retain_batches) / len(eval_retain_batches)
+        print(f"[unlearn] TAR Eval  forget_NLL={forget_nll:.4f}  retain_NLL={retain_nll:.4f}")
+
+        # L2 weight distance
+        if base_state is not None:
+            l2_dist = 0.0
+            layer_l2 = {}
+            for k, v in model.state_dict().items():
+                if k in base_state:
+                    diff = v.detach().float().cpu() - base_state[k]
+                    param_l2_sq = (diff ** 2).sum().item()
+                    l2_dist += param_l2_sq
+                    parts = k.split(".")
+                    for i, p in enumerate(parts):
+                        if p == "layers" and i + 1 < len(parts) and parts[i + 1].isdigit():
+                            lid = int(parts[i + 1])
+                            layer_l2[lid] = layer_l2.get(lid, 0.0) + param_l2_sq
+                            break
+            l2_dist = l2_dist ** 0.5
+            layer_l2 = {lid: sq ** 0.5 for lid, sq in sorted(layer_l2.items())}
+            print(f"[unlearn] TAR L2 weight distance from base model: {l2_dist:.4f}")
+            print(f"[unlearn] TAR Per-layer L2: {' '.join(f'L{lid}={d:.3f}' for lid, d in layer_l2.items())}")
+            del base_state
+
+        try:
+            import wandb
+            if wandb.run is not None:
+                wandb.log({"eval/forget_nll": forget_nll, "eval/retain_nll": retain_nll, "eval/weight_l2_dist": l2_dist})
+                summary_dict = {"final_forget_nll": forget_nll, "final_retain_nll": retain_nll, "weight_l2_dist": l2_dist}
+                for lid, d in layer_l2.items():
+                    summary_dict[f"layer_l2/layer_{lid}"] = d
+                wandb.summary.update(summary_dict)
+        except Exception:
+            pass
+
         # Save model and exit early
         model_out_path = Path(args.outdir) / "pytorch_model.bin"
         model_out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1715,6 +1797,7 @@ def main():
         # Always save for evaluation, then clean up later if NO_SAVE
         model.save_pretrained(args.outdir)
         tokenizer.save_pretrained(args.outdir)
+        save_training_config(args, args.outdir)
         if args.no_save:
             print(f"[unlearn] TAR model saved temporarily for evaluation (will be deleted after due to --no-save): {args.outdir}")
         else:
@@ -1848,9 +1931,43 @@ def main():
         except Exception:
             pass
 
+    # ---- Weight distance from base model ----
+    if base_state is not None:
+        l2_dist = 0.0
+        layer_l2 = {}  # per-layer L2 distance
+        for k, v in model.state_dict().items():
+            if k in base_state:
+                diff = v.detach().float().cpu() - base_state[k]
+                param_l2_sq = (diff ** 2).sum().item()
+                l2_dist += param_l2_sq
+                # Extract layer index (e.g. "model.layers.13.self_attn.q_proj.weight" -> 13)
+                parts = k.split(".")
+                for i, p in enumerate(parts):
+                    if p == "layers" and i + 1 < len(parts) and parts[i + 1].isdigit():
+                        lid = int(parts[i + 1])
+                        layer_l2[lid] = layer_l2.get(lid, 0.0) + param_l2_sq
+                        break
+        l2_dist = l2_dist ** 0.5
+        layer_l2 = {lid: sq ** 0.5 for lid, sq in sorted(layer_l2.items())}
+        print(f"[unlearn] L2 weight distance from base model: {l2_dist:.4f}")
+        print(f"[unlearn] Per-layer L2: {' '.join(f'L{lid}={d:.3f}' for lid, d in layer_l2.items())}")
+        try:
+            import wandb
+            if wandb.run is not None:
+                log_dict = {"eval/weight_l2_dist": l2_dist}
+                summary_dict = {"weight_l2_dist": l2_dist}
+                for lid, d in layer_l2.items():
+                    log_dict[f"eval/layer_l2/layer_{lid}"] = d
+                    summary_dict[f"layer_l2/layer_{lid}"] = d
+                wandb.log(log_dict)
+                wandb.summary.update(summary_dict)
+        except Exception:
+            pass
+        del base_state  # free memory
+
     # ---- Save ----
     os.makedirs(args.outdir, exist_ok=True)
-    
+
     print(f"[unlearn] Saving model to {args.outdir} ...")
     # Disable gradient checkpointing before saving (not serializable)
     if hasattr(model, "gradient_checkpointing_disable"):
@@ -1858,6 +1975,7 @@ def main():
 
     model.save_pretrained(args.outdir)
     tokenizer.save_pretrained(args.outdir)
+    save_training_config(args, args.outdir)
     if args.no_save:
         print("[unlearn] Model saved temporarily for evaluation (will be deleted after due to --no-save) ✓")
     else:

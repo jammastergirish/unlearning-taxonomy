@@ -33,12 +33,12 @@ export DEVICE="${DEVICE:-auto}"
 export DTYPE="${DTYPE:-auto}"
 export EVAL_SPLIT=0.1
 export MAX_LENGTH=512
-export NO_SAVE=1
+#export NO_SAVE=1
 
 METHOD="cb"
 LAYER_ID="5,6,7"
 LR="3e-05"
-EPOCHS=3
+EPOCHS=1
 
 echo "=========================================================="
 echo "KL's CB Sweep: alpha × steering_coeff × batch_size"
