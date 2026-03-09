@@ -1357,6 +1357,7 @@ def compute_weight_distance(model, base_state):
     return l2_dist, layer_l2
 
 
+
 def build_outdir(args) -> str:
     """Build the output directory path from the method and its relevant parameters."""
     method = args.method
