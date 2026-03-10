@@ -47,6 +47,65 @@ def _extract_best_config(run_name: str) -> str:
     return run_name
 
 
+# Mapping from abbreviated parameter names to readable labels
+_ABBREV_TO_LABEL = {
+    "ep": "Epochs",
+    "lr": "Learning Rate",
+    "bs": "Batch Size",
+    "mle": "Max Length",
+    "mli": "Max Lines",
+    "ml": "Max Length",
+    "rw": "Retain Weight",
+    "fw": "Forget Weight",
+    "b": "Beta",
+    "a": "Alpha",
+    "sc": "Steering Coeff",
+    "ly": "Layers",
+    "le": "LAT Epsilon",
+    "ls": "LAT Steps",
+    "ta": "TAR Alpha",
+    "tlr": "TAR LR",
+    "tep": "TAR Epochs",
+    "wn": "Noise Std",
+    "wr": "Reg Lambda",
+}
+
+# Ordered by longest abbreviation first so e.g. "mle" matches before "ml"
+_ABBREV_PATTERN = sorted(_ABBREV_TO_LABEL.keys(), key=len, reverse=True)
+
+
+def _expand_config(config_str: str) -> str:
+    """Convert an abbreviated config like 'ep1_lr1.3e-05_bs16_a200.0_sc10.0_ly13-14-15'
+    into a readable multi-line string using <br> for line breaks in markdown tables.
+    """
+    import re
+    parts = config_str.split("_")
+
+    result = []
+    i = 0
+    while i < len(parts):
+        part = parts[i]
+        matched = False
+        for abbrev in _ABBREV_PATTERN:
+            if part.startswith(abbrev):
+                value = part[len(abbrev):]
+                # Handle layer values with dashes (already fine)
+                label = _ABBREV_TO_LABEL[abbrev]
+                result.append(f"**{label}:** {value}")
+                matched = True
+                break
+        if not matched:
+            # Could be a continuation of a previous value (shouldn't happen
+            # with current naming, but handle gracefully)
+            if result:
+                result[-1] += f"-{part}"
+            else:
+                result.append(part)
+        i += 1
+
+    return "<br>".join(result)
+
+
 def main():
     load_dotenv()
     api = wandb.Api()
@@ -177,7 +236,19 @@ def main():
     out_file = os.path.join(os.path.dirname(__file__), "best_unlearning_models.md")
     print(f"Writing results to {out_file}...")
 
+    sweeps_df = sweeps_df.sort_values(
+        by=["Method", "Score", "MMLU"],
+        ascending=[True, False, False],
+    )
+
     with open(out_file, 'w') as f:
+        # ------------------------------------------------------------------ #
+        # Cross-method summary table (at the top for quick reference)
+        # ------------------------------------------------------------------ #
+        summary = _build_summary_table(sweeps_df)
+        if summary:
+            f.write(summary + "\n")
+
         # ------------------------------------------------------------------ #
         # Baselines
         # ------------------------------------------------------------------ #
@@ -198,11 +269,6 @@ def main():
         f.write("## Best Models By Method\n\n")
         f.write("*Ranked by Score = MMLU - WMDP (Robust)*\n\n")
 
-        sweeps_df = sweeps_df.sort_values(
-            by=["Method", "Score", "MMLU"],
-            ascending=[True, False, False],
-        )
-
         for method, group in sweeps_df.groupby("Method"):
             f.write(f"### {method}\n\n")
             best = group.sort_values(
@@ -211,18 +277,13 @@ def main():
             )
             f.write(_md_table(best, cols) + "\n\n")
 
-    # ------------------------------------------------------------------ #
-    # Cross-method summary table (appended to the same output file)
-    # ------------------------------------------------------------------ #
-    _append_summary_table(sweeps_df, out_file)
-
     print("Done!")
 
 
-def _append_summary_table(sweeps_df: "pd.DataFrame", out_file: str) -> None:
+def _build_summary_table(sweeps_df: "pd.DataFrame") -> str:
     """
     For each method, pick the single best run (by Score then MMLU) and
-    append a cross-method summary markdown table to the output file.
+    return a cross-method summary markdown table string.
 
     Columns: Method | Best Config | L2 Dist | MMLU | WMDP | MMLU-WMDP | Forget NLL | Retain NLL
     """
@@ -230,7 +291,7 @@ def _append_summary_table(sweeps_df: "pd.DataFrame", out_file: str) -> None:
 
     if sweeps_df.empty:
         print("No sweep runs available – skipping summary table.")
-        return
+        return ""
 
     def _f(val, decimals=4):
         if val is None or (isinstance(val, float) and np.isnan(val)):
@@ -272,7 +333,7 @@ def _append_summary_table(sweeps_df: "pd.DataFrame", out_file: str) -> None:
 
         rows.append([
             method,
-            _extract_best_config(best["Name"]),
+            _expand_config(_extract_best_config(best["Name"])),
             _f(l2, 2),
             _f(mmlu),
             _f(wmdp),
@@ -280,24 +341,23 @@ def _append_summary_table(sweeps_df: "pd.DataFrame", out_file: str) -> None:
             _f(fgt_nll, 3),
             _f(ret_nll, 3),
             str(best.get("Date (UTC)", "N/A")),
+            str(best.get("Name", "")),
         ])
 
     if not rows:
         print("No rows for summary table.")
-        return
+        return ""
 
-    headers = ["Method", "Best Config", "L2 Dist", "MMLU", "WMDP (Robust)", "MMLU−WMDP (Robust)", "Forget NLL", "Retain NLL", "Date (UTC)"]
+    headers = ["Method", "Best Config", "L2 Dist", "MMLU", "WMDP (Robust)", "MMLU−WMDP (Robust)", "Forget NLL", "Retain NLL", "Date (UTC)", "Run Name"]
     header  = "| " + " | ".join(headers) + " |"
     sep     = "| " + " | ".join(["---"] * len(headers)) + " |"
     body    = ["| " + " | ".join(r) + " |" for r in rows]
     table   = "\n".join([header, sep] + body)
 
-    with open(out_file, "a") as f:
-        f.write("## Cross-Method Comparison — Best Config Per Method\n\n")
-        f.write("*Best run per method ranked by Score = MMLU − WMDP (Robust)*\n\n")
-        f.write(table + "\n")
-
-    print("Summary table appended to", out_file)
+    result = "## Cross-Method Comparison — Best Config Per Method\n\n"
+    result += "*Best run per method ranked by Score = MMLU − WMDP (Robust)*\n\n"
+    result += table + "\n"
+    return result
 
 
 if __name__ == "__main__":

@@ -1,3 +1,22 @@
+## Cross-Method Comparison — Best Config Per Method
+
+*Best run per method ranked by Score = MMLU − WMDP (Robust)*
+
+| Method | Best Config | L2 Dist | MMLU | WMDP (Robust) | MMLU−WMDP (Robust) | Forget NLL | Retain NLL | Date (UTC) | Run Name |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| cb | **Epochs:** 1<br>**Learning Rate:** 1.3e-05<br>**Batch Size:** 16<br>**Alpha:** 200.0<br>**Steering Coeff:** 10.0<br>**Layers:** 13-14-15<br>**Max Length:** 512<br>**Max Lines:** 1024 | 2.68 | 0.4425 | 0.4136 | 0.0289 | 2.178 | 2.684 | 2026-03-09 19:31 UTC | EleutherAI_deep-ignorance-unfiltered/cb__ep1_lr1.3e-05_bs16_a200.0_sc10.0_ly13-14-15_mle512_mli1024 |
+| cb_lat | **Epochs:** 1<br>**Learning Rate:** 1.3e-05<br>**Batch Size:** 16<br>**Alpha:** 200.0<br>**Steering Coeff:** 10.0<br>**LAT Epsilon:** 0.1<br>**LAT Steps:** 5<br>**Layers:** 13-14-15<br>**Max Length:** 512<br>**Max Lines:** 1024 | 2.68 | 0.4435 | 0.4124 | 0.0311 | 2.178 | 2.684 | 2026-03-09 19:43 UTC | EleutherAI_deep-ignorance-unfiltered/cb_lat__ep1_lr1.3e-05_bs16_a200.0_sc10.0_le0.1_ls5_ly13-14-15_mle512_mli1024 |
+| dpo | **Epochs:** 1<br>**Learning Rate:** 4.5e-05<br>**Batch Size:** 32<br>**Beta:** 0.01<br>**Max Length:** 512<br>**Max Lines:** 8192 | 17.61 | 0.3840 | 0.2408 | 0.1432 | 184.176 | 3.617 | 2026-03-09 21:34 UTC | EleutherAI_deep-ignorance-unfiltered/dpo__ep1_lr4.5e-05_bs32_b0.01_mle512_mli8192 |
+| ga | **Epochs:** 3<br>**Learning Rate:** 3e-05<br>**Batch Size:** 32<br>**Retain Weight:** 5.0<br>**Max Length:** 2048 | N/A | 0.3558 | 0.2385 | 0.1173 | N/A | N/A | 2026-03-05 14:02 UTC | unlearned_models_EleutherAI_deep-ignorance-unfiltered_ga__ep3_lr3e-05_bs32_rw5.0_ml2048 |
+| ga_simple | **Epochs:** 1<br>**Learning Rate:** 1e-05<br>**Batch Size:** 32<br>**Max Length:** 1024 | N/A | 0.4471 | 0.4240 | 0.0231 | 2.144 | 2.169 | 2026-03-07 17:20 UTC | EleutherAI_deep-ignorance-unfiltered/ga_simple__ep1_lr1e-05_bs32_ml1024 |
+| grad_diff | **Epochs:** 3<br>**Learning Rate:** 4e-05<br>**Batch Size:** 32<br>**Forget Weight:** 1.0<br>**Max Length:** 512<br>**Max Lines:** 2048 | 14.68 | 0.3524 | 0.2719 | 0.0805 | 181.122 | 2.762 | 2026-03-09 21:21 UTC | EleutherAI_deep-ignorance-unfiltered/grad_diff__ep3_lr4e-05_bs32_fw1.0_mle512_mli2048 |
+| lat | **Epochs:** 3<br>**Learning Rate:** 3e-05<br>**Batch Size:** 32<br>**LAT Epsilon:** 0.1<br>**LAT Steps:** 5<br>**Retain Weight:** 1.0<br>**Layers:** 5-6-7<br>**Max Length:** 512<br>**Max Lines:** 2048 | N/A | 0.2898 | 0.2742 | 0.0156 | 188.541 | 2.687 | 2026-03-08 17:27 UTC | EleutherAI_deep-ignorance-unfiltered/lat__ep3_lr3e-05_bs32_le0.1_ls5_rw1.0_ly5-6-7_mle512_mli2048 |
+| npo | **Epochs:** 1<br>**Learning Rate:** 4.5e-05<br>**Batch Size:** 32<br>**Beta:** 0.01<br>**Retain Weight:** 1.5<br>**Max Length:** 512<br>**Max Lines:** 8192 | 17.52 | 0.4426 | 0.2673 | 0.1753 | 182.439 | 2.429 | 2026-03-09 19:52 UTC | EleutherAI_deep-ignorance-unfiltered/npo__ep1_lr4.5e-05_bs32_b0.01_rw1.5_mle512_mli8192 |
+| rmu | **Epochs:** 1<br>**Learning Rate:** 2e-05<br>**Batch Size:** 32<br>**Alpha:** 1000.0<br>**Steering Coeff:** 20.0<br>**Layers:** 11-12-13<br>**Max Length:** 2048 | N/A | 0.4030 | 0.3468 | 0.0562 | 2.233 | 3.100 | 2026-03-06 18:20 UTC | EleutherAI_deep-ignorance-unfiltered/rmu__ep1_lr2e-05_bs32_a1000.0_sc20.0_ly11-12-13_ml2048 |
+| simnpo | **Epochs:** 3<br>**Learning Rate:** 3e-05<br>**Batch Size:** 32<br>**Beta:** 0.01<br>**Retain Weight:** 1.0<br>**Max Length:** 2048 | N/A | 0.4315 | 0.2535 | 0.1780 | 198.902 | 2.482 | 2026-03-04 03:39 UTC | EleutherAI_deep-ignorance-unfiltered/simnpo__ep3_lr3e-05_bs32_b0.01_rw1.0_ml2048 |
+| tar | **TAR Alpha:** 5.0<br>**TAR LR:** 1e-05<br>**TAR Epochs:** 1<br>**Max Length:** 512<br>**Max Lines:** 1024 | 11.13 | 0.4313 | 0.3998 | 0.0315 | 2.697 | 2.867 | 2026-03-09 16:53 UTC | EleutherAI_deep-ignorance-unfiltered/tar__ta5.0_tlr1e-05_tep1_mle512_mli1024 |
+| wt_dist | **Epochs:** 3<br>**Learning Rate:** 3e-05<br>**Batch Size:** 32<br>**Noise Std:** 0.01<br>**Max Length:** 2048 | N/A | 0.3518 | 0.2903 | 0.0615 | N/A | N/A | 2026-03-05 08:31 UTC | unlearned_models_EleutherAI_deep-ignorance-unfiltered_wt_dist__ep3_lr3e-05_bs32_wn0.01_ml2048 |
+
 ## Baselines
 
 | Name | Score | L2 Dist | MMLU | WMDP (Robust) | WMDP (Robust Rewritten) | WMDP (Cloze) | WMDP (Categorized) | Forget NLL | Retain NLL | Date (UTC) |
@@ -16,6 +35,7 @@
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | EleutherAI_deep-ignorance-unfiltered/cb__ep1_lr1.3e-05_bs16_a200.0_sc10.0_ly13-14-15_mle512_mli1024 | 0.0289 | 2.6794 | 0.4425 | 0.4136 | 0.2594 | 0.3504 | 0.5004 | 2.1783 | 2.6842 | 2026-03-09 19:31 UTC |
 | EleutherAI_deep-ignorance-unfiltered/cb__ep1_lr1.3e-05_bs16_a1000.0_sc5.0_ly13-14-15_mle512_mli1024 | 0.0274 | 2.6785 | 0.4421 | 0.4147 | 0.2565 | 0.3522 | 0.5020 | 2.1783 | 2.6848 | 2026-03-09 16:10 UTC |
+| EleutherAI_deep-ignorance-unfiltered/cb__ep2_lr1e-05_bs32_a1000.0_sc5.0_ly11-12-13_mle2048_mli1024 | 0.0208 | 2.9595 | 0.4390 | 0.4182 | 0.2487 | 0.3699 | 0.5051 | 2.0571 | 2.1897 | 2026-03-09 21:39 UTC |
 | EleutherAI_deep-ignorance-unfiltered/cb__ep2_lr1e-05_bs32_a1000.0_sc5.0_ly11-12-13_ml2048 | 0.0165 | N/A | 0.4071 | 0.3906 | 0.2524 | 0.3606 | 0.4564 | 2.3332 | 4.3229 | 2026-03-07 07:18 UTC |
 | EleutherAI_deep-ignorance-unfiltered/cb__ep3_lr1e-05_bs32_a500.0_sc10.0_ly11-12-13_ml2048 | 0.0136 | N/A | 0.3154 | 0.3018 | 0.2630 | 0.3309 | 0.3064 | 4.9704 | 7.0958 | 2026-03-07 07:00 UTC |
 | EleutherAI_deep-ignorance-unfiltered/cb__ep3_lr1e-05_bs32_a800.0_sc8.0_ly11-12-13_ml2048 | 0.0104 | N/A | 0.3146 | 0.3041 | 0.2618 | 0.3336 | 0.3071 | 4.9594 | 7.0928 | 2026-03-07 07:37 UTC |
@@ -42,13 +62,16 @@
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | EleutherAI_deep-ignorance-unfiltered/cb_lat__ep1_lr1.3e-05_bs16_a200.0_sc10.0_le0.1_ls5_ly13-14-15_mle512_mli1024 | 0.0311 | 2.6800 | 0.4435 | 0.4124 | 0.2573 | 0.3504 | 0.4996 | 2.1782 | 2.6841 | 2026-03-09 19:43 UTC |
 | EleutherAI_deep-ignorance-unfiltered/cb_lat__ep1_lr1.3e-05_bs16_a1000.0_sc5.0_le0.1_ls5_ly13-14-15_mle512_mli1024 | 0.0294 | 2.6796 | 0.4430 | 0.4136 | 0.2569 | 0.3485 | 0.5035 | 2.1783 | 2.6847 | 2026-03-09 16:22 UTC |
+| EleutherAI_deep-ignorance-unfiltered/cb_lat__ep3_lr1e-05_bs32_a1000.0_sc5.0_le0.1_ls5_ly11-12-13_mle2048_mli1024 | 0.0201 | 3.9074 | 0.4314 | 0.4113 | 0.2511 | 0.3671 | 0.4878 | 2.1196 | 2.7950 | 2026-03-10 05:01 UTC |
 
 ### dpo
 
 | Name | Score | L2 Dist | MMLU | WMDP (Robust) | WMDP (Robust Rewritten) | WMDP (Cloze) | WMDP (Categorized) | Forget NLL | Retain NLL | Date (UTC) |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | EleutherAI_deep-ignorance-unfiltered/dpo__ep1_lr4.5e-05_bs32_b0.01_mle512_mli8192 | 0.1432 | 17.6103 | 0.3840 | 0.2408 | 0.2437 | 0.2491 | 0.2451 | 184.1763 | 3.6173 | 2026-03-09 21:34 UTC |
+| EleutherAI_deep-ignorance-unfiltered/dpo__ep1_lr4.5e-05_bs32_b0.02_mle512_mli8192 | 0.1391 | 15.9307 | 0.3914 | 0.2523 | 0.2659 | 0.2379 | 0.2506 | 178.0263 | 3.9866 | 2026-03-09 22:05 UTC |
 | EleutherAI_deep-ignorance-unfiltered/dpo__ep3_lr4e-05_bs32_b0.01_mle512_mli2048 | 0.0879 | N/A | 0.3551 | 0.2673 | 0.2511 | 0.2481 | 0.2757 | 185.5913 | 3.7995 | 2026-03-08 15:42 UTC |
+| EleutherAI_deep-ignorance-unfiltered/dpo__ep1_lr4.5e-05_bs32_b0.03_mle512_mli8192 | 0.0807 | 15.0244 | 0.3549 | 0.2742 | 0.2651 | 0.2193 | 0.2639 | 173.9975 | 4.9095 | 2026-03-10 03:27 UTC |
 | EleutherAI_deep-ignorance-unfiltered/dpo__ep3_lr3e-05_bs32_b0.01_mle512_mli2048 | 0.0473 | N/A | 0.3089 | 0.2615 | 0.2269 | 0.2221 | 0.2498 | 162.2404 | 3.4266 | 2026-03-08 15:25 UTC |
 | EleutherAI_deep-ignorance-unfiltered/dpo__ep3_lr3e-05_bs32_b0.05_mle512_mli2048 | 0.0303 | N/A | 0.3310 | 0.3007 | 0.2651 | 0.2110 | 0.3134 | 133.2267 | 4.4992 | 2026-03-08 16:31 UTC |
 | EleutherAI_deep-ignorance-unfiltered/dpo__ep3_lr3e-05_bs32_b0.1_mle512_mli2048 | 0.0238 | N/A | 0.3257 | 0.3018 | 0.2659 | 0.2500 | 0.3048 | 91.2222 | 5.3127 | 2026-03-08 16:52 UTC |
@@ -227,21 +250,3 @@
 | unlearned_models_EleutherAI_deep-ignorance-unfiltered_wt_dist__ep1_lr3e-05_bs32_wn0.02_ml2048 | -0.0452 | N/A | 0.2290 | 0.2742 | 0.2639 | 0.2361 | 0.2553 | N/A | N/A | 2026-03-05 13:04 UTC |
 | EleutherAI_deep-ignorance-unfiltered/wt_dist__ep1_lr3e-05_bs32_wn0.02_ml2048 | -0.0452 | N/A | 0.2290 | 0.2742 | 0.2639 | 0.2361 | 0.2553 | 5.9272 | 6.0225 | 2026-03-05 12:23 UTC |
 
-## Cross-Method Comparison — Best Config Per Method
-
-*Best run per method ranked by Score = MMLU − WMDP (Robust)*
-
-| Method | Best Config | L2 Dist | MMLU | WMDP (Robust) | MMLU−WMDP (Robust) | Forget NLL | Retain NLL | Date (UTC) |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| cb | ep1_lr1.3e-05_bs16_a200.0_sc10.0_ly13-14-15_mle512_mli1024 | 2.68 | 0.4425 | 0.4136 | 0.0289 | 2.178 | 2.684 | 2026-03-09 19:31 UTC |
-| cb_lat | ep1_lr1.3e-05_bs16_a200.0_sc10.0_le0.1_ls5_ly13-14-15_mle512_mli1024 | 2.68 | 0.4435 | 0.4124 | 0.0311 | 2.178 | 2.684 | 2026-03-09 19:43 UTC |
-| dpo | ep1_lr4.5e-05_bs32_b0.01_mle512_mli8192 | 17.61 | 0.3840 | 0.2408 | 0.1432 | 184.176 | 3.617 | 2026-03-09 21:34 UTC |
-| ga | ep3_lr3e-05_bs32_rw5.0_ml2048 | N/A | 0.3558 | 0.2385 | 0.1173 | N/A | N/A | 2026-03-05 14:02 UTC |
-| ga_simple | ep1_lr1e-05_bs32_ml1024 | N/A | 0.4471 | 0.4240 | 0.0231 | 2.144 | 2.169 | 2026-03-07 17:20 UTC |
-| grad_diff | ep3_lr4e-05_bs32_fw1.0_mle512_mli2048 | 14.68 | 0.3524 | 0.2719 | 0.0805 | 181.122 | 2.762 | 2026-03-09 21:21 UTC |
-| lat | ep3_lr3e-05_bs32_le0.1_ls5_rw1.0_ly5-6-7_mle512_mli2048 | N/A | 0.2898 | 0.2742 | 0.0156 | 188.541 | 2.687 | 2026-03-08 17:27 UTC |
-| npo | ep1_lr4.5e-05_bs32_b0.01_rw1.5_mle512_mli8192 | 17.52 | 0.4426 | 0.2673 | 0.1753 | 182.439 | 2.429 | 2026-03-09 19:52 UTC |
-| rmu | ep1_lr2e-05_bs32_a1000.0_sc20.0_ly11-12-13_ml2048 | N/A | 0.4030 | 0.3468 | 0.0562 | 2.233 | 3.100 | 2026-03-06 18:20 UTC |
-| simnpo | ep3_lr3e-05_bs32_b0.01_rw1.0_ml2048 | N/A | 0.4315 | 0.2535 | 0.1780 | 198.902 | 2.482 | 2026-03-04 03:39 UTC |
-| tar | ta5.0_tlr1e-05_tep1_mle512_mli1024 | 11.13 | 0.4313 | 0.3998 | 0.0315 | 2.697 | 2.867 | 2026-03-09 16:53 UTC |
-| wt_dist | ep3_lr3e-05_bs32_wn0.01_ml2048 | N/A | 0.3518 | 0.2903 | 0.0615 | N/A | N/A | 2026-03-05 08:31 UTC |
