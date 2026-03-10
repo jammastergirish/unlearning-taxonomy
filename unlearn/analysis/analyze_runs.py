@@ -176,9 +176,6 @@ def main():
             # Some runs may use underscore instead of slash (e.g., "_simnpo__")
             # Baselines are plain model runs without any method suffix
             "IsBase":             not any(f"/{m}__" in run.name or f"_{m}__" in run.name for m in KNOWN_METHODS),
-            # Timestamp for deduplication — latest run wins when the same
-            # config has been run more than once.
-            "CreatedAt":               run.created_at,
         })
 
     if not data:
@@ -188,36 +185,34 @@ def main():
     df = pd.DataFrame(data)
 
     # ------------------------------------------------------------------
-    # Merge runs that share the same display Name.
+    # Deduplicate runs that represent the same trained model.
     #
-    # unlearn.py (training) and eval.py (eval subprocess) both call
-    # wandb.init() with the same display name, producing two separate runs:
-    #   - training run: has weight_l2_dist / NLL, also gets eval_bench
-    #     metrics logged back onto it after eval.py finishes
-    #   - eval run:     has eval_bench metrics only
+    # Two naming schemes exist across code versions:
+    #   Old  →  "unlearned_models_EleutherAI_deep-ignorance-unfiltered_npo__..."
+    #   New  →  "EleutherAI_deep-ignorance-unfiltered/npo__..."
     #
-    # Simple "keep latest" would drop the training run and lose L2.
-    # Instead: group by Name and take the first non-null value per column
-    # (rows sorted latest-first, so newer values win when both are non-null).
+    # Runs from both eras may appear in the same project with identical
+    # metrics.  We detect them by rounding MMLU+WMDP to 4 dp (runs with
+    # exactly the same checkpoint produce bit-identical eval results), then
+    # keep whichever name contains a "/" (new-style) over the flat one.
     # ------------------------------------------------------------------
-    df = df.sort_values("CreatedAt", ascending=False)
+    def _name_style_rank(name: str) -> int:
+        """Return 0 for new-style (has '/'), 1 for old-style."""
+        return 0 if "/" in name else 1
 
-    def _first_valid(s):
-        valid = s.dropna()
-        return valid.iloc[0] if not valid.empty else s.iloc[0]
-
-    merged_rows = []
-    for name, group in df.groupby("Name", sort=False):
-        row = {col: _first_valid(group[col]) for col in df.columns}
-        # Timestamp: always the latest run
-        row["CreatedAt"] = group["CreatedAt"].iloc[0]
-        merged_rows.append(row)
-
-    df = pd.DataFrame(merged_rows)
-
-    # Format timestamp for display — keep timezone explicit
-    df["Date (UTC)"] = pd.to_datetime(df["CreatedAt"], utc=True).dt.strftime("%Y-%m-%d %H:%M UTC")
-    df = df.drop(columns=["CreatedAt"])
+    df["_style"] = df["Name"].apply(_name_style_rank)
+    df["_fp"] = (
+        df["MMLU"].round(4).astype(str)
+        + "|" + df["WMDP (Robust)"].round(4).astype(str)
+        + "|" + df["WMDP (Cloze)"].round(4).astype(str)
+        + "|" + df["WMDP (Categorized)"].round(4).astype(str)
+        + "|" + df["WMDP (Robust Rewritten)"].round(4).astype(str)
+    )
+    df = (
+        df.sort_values("_style")          # new-style (0) first
+          .drop_duplicates(subset="_fp", keep="first")
+          .drop(columns=["_style", "_fp"])
+    )
 
     # Calculate a combined score
     # Goal: Maximize MMLU (retain) and Minimize WMDP_Robust (forget)
@@ -227,7 +222,7 @@ def main():
 
     print(f"\nSuccessfully processed {len(df)} runs with evaluation metrics.\n")
 
-    cols = ["Name", "Score", "L2 Dist", "MMLU", "WMDP (Robust)", "WMDP (Robust Rewritten)", "WMDP (Cloze)", "WMDP (Categorized)", "Forget NLL", "Retain NLL", "Date (UTC)"]
+    cols = ["Name", "Score", "L2 Dist", "MMLU", "WMDP (Robust)", "WMDP (Robust Rewritten)", "WMDP (Cloze)", "WMDP (Categorized)", "Forget NLL", "Retain NLL"]
 
     baselines_df = df[df["IsBase"]].sort_values("Name")
     sweeps_df    = df[~df["IsBase"]]
@@ -308,16 +303,7 @@ def _build_summary_table(sweeps_df: "pd.DataFrame") -> str:
         if ranked.empty:
             continue
 
-        # Prefer runs that have L2 Dist, but only if they're within 0.01
-        # Score of the overall best.  If the L2 run is much worse, show
-        # the true best honestly (even if L2 is N/A for that row).
-        best_overall = ranked.iloc[0]
-        best_score   = best_overall.get("Score") or 0
-        with_l2 = ranked[ranked["L2 Dist"].notna()]
-        if not with_l2.empty and (best_score - with_l2.iloc[0].get("Score", 0)) <= 0.01:
-            best = with_l2.iloc[0]
-        else:
-            best = best_overall
+        best = ranked.iloc[0]
         mmlu    = best.get("MMLU")
         wmdp    = best.get("WMDP (Robust)")
         l2      = best.get("L2 Dist")
@@ -340,24 +326,25 @@ def _build_summary_table(sweeps_df: "pd.DataFrame") -> str:
             mmlu_minus_wmdp,
             _f(fgt_nll, 3),
             _f(ret_nll, 3),
-            str(best.get("Date (UTC)", "N/A")),
             str(best.get("Name", "")),
         ])
 
     if not rows:
         print("No rows for summary table.")
-        return ""
+        return
 
-    headers = ["Method", "Best Config", "L2 Dist", "MMLU", "WMDP (Robust)", "MMLU−WMDP (Robust)", "Forget NLL", "Retain NLL", "Date (UTC)", "Run Name"]
+    headers = ["Method", "Best Config", "L2 Dist", "MMLU", "WMDP", "MMLU-WMDP", "Forget NLL", "Retain NLL"]
     header  = "| " + " | ".join(headers) + " |"
     sep     = "| " + " | ".join(["---"] * len(headers)) + " |"
     body    = ["| " + " | ".join(r) + " |" for r in rows]
     table   = "\n".join([header, sep] + body)
 
-    result = "## Cross-Method Comparison — Best Config Per Method\n\n"
-    result += "*Best run per method ranked by Score = MMLU − WMDP (Robust)*\n\n"
-    result += table + "\n"
-    return result
+    with open(out_file, "a") as f:
+        f.write("## Cross-Method Comparison — Best Config Per Method\n\n")
+        f.write("*Best run per method ranked by Score = MMLU − WMDP (Robust)*\n\n")
+        f.write(table + "\n")
+
+    print("Summary table appended to", out_file)
 
 
 if __name__ == "__main__":
