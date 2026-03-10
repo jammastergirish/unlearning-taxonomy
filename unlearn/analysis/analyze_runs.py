@@ -226,9 +226,6 @@ def main():
     print(f"Writing results to {out_file}...")
 
     with open(out_file, "w") as f:
-        # Top-level header
-        f.write(f"# Best of {len(df)} Runs\n\n")
-
         # 1. Best config per method
         f.write("## Best Config Per Method\n\n")
         f.write("*Best run per method ranked by Score = MMLU − WMDP (Robust)*\n\n")
