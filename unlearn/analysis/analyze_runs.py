@@ -3,6 +3,7 @@
 # dependencies = [
 #     "wandb",
 #     "pandas",
+#     "numpy",
 #     "python-dotenv",
 #     "tqdm",
 # ]
@@ -25,7 +26,7 @@ KNOWN_METHODS = [
 # Columns shown in every table
 TABLE_COLS = [
     "Method", "Config", "L2 Dist",
-    "MMLU", "WMDP (Robust)", "WMDP (Cloze)", "WMDP (Categorized)", "WMDP (Robust Rewritten)",
+    "MMLU", "WMDP (Robust Rewritten)", "WMDP (Robust)", "WMDP (Cloze)", "WMDP (Categorized)",
     "MMLU-WMDP", "Forget NLL", "Retain NLL", "Run Name",
 ]
 
@@ -87,19 +88,27 @@ def _score(mmlu, wmdp):
     return "N/A"
 
 
+def _wmdp_primary(run_row):
+    """Return the best available WMDP score: prefer robust_rewritten, fall back to robust."""
+    rr = run_row.get("WMDP (Robust Rewritten)")
+    if rr is not None and not (isinstance(rr, float) and np.isnan(rr)):
+        return rr
+    return run_row.get("WMDP (Robust)")
+
+
 def _run_to_row(run_row) -> list[str]:
     """Convert a DataFrame row into a list of formatted cell strings."""
     mmlu = run_row.get("MMLU")
-    wmdp = run_row.get("WMDP (Robust)")
+    wmdp = _wmdp_primary(run_row)
     return [
         str(run_row.get("Method", "")),
         _expand_config(_extract_config(str(run_row.get("Name", "")))),
         _fmt(run_row.get("L2 Dist"), 2),
         _fmt(mmlu),
-        _fmt(wmdp),
+        _fmt(run_row.get("WMDP (Robust Rewritten)")),
+        _fmt(run_row.get("WMDP (Robust)")),
         _fmt(run_row.get("WMDP (Cloze)")),
         _fmt(run_row.get("WMDP (Categorized)")),
-        _fmt(run_row.get("WMDP (Robust Rewritten)")),
         _score(mmlu, wmdp),
         _fmt(run_row.get("Forget NLL"), 3),
         _fmt(run_row.get("Retain NLL"), 3),
@@ -129,80 +138,114 @@ def _df_to_md(df: pd.DataFrame) -> str:
 # Data fetching
 # ---------------------------------------------------------------------------
 
+def _detect_method(run_name: str) -> str:
+    pattern = r'[/_](' + '|'.join(KNOWN_METHODS) + r')__'
+    match = re.search(pattern, run_name)
+    return match.group(1) if match else "unknown"
+
+
 def _fetch_runs(api) -> pd.DataFrame:
     project_name = "cambridge_era"
     print(f"Fetching runs from project '{project_name}'...")
 
-    runs = api.runs(
+    # Fetch ALL finished runs — training runs have NLL/L2, eval runs have MMLU/WMDP.
+    # They share the same run name but are separate wandb runs.
+    all_runs = api.runs(
         project_name,
-        filters={
-            "$and": [
-                {"state": "finished"},
-                {"summary_metrics.eval_bench/mmlu/acc": {"$exists": True}},
-            ]
-        },
+        filters={"state": "finished"},
         per_page=500,
     )
 
-    data = []
-    for run in tqdm(runs, desc="Processing runs"):
+    eval_data = []   # runs with MMLU (from eval.py)
+    train_data = []  # runs with NLL/L2 (from unlearn.py)
+
+    for run in tqdm(all_runs, desc="Processing runs"):
         method = run.config.get("hyperparameters", {}).get("method", "unknown")
         if method == "unknown":
-            pattern = r'[/_](' + '|'.join(KNOWN_METHODS) + r')__'
-            match = re.search(pattern, run.name)
-            if match:
-                method = match.group(1)
+            method = _detect_method(run.name)
 
         mmlu   = run.summary.get("eval_bench/mmlu/acc")
         wmdp_1 = run.summary.get("eval_bench/wmdp_bio_robust/acc")
         wmdp_2 = run.summary.get("eval_bench/wmdp_bio_cloze_verified/acc_norm")
         wmdp_3 = run.summary.get("eval_bench/wmdp_bio_categorized_mcqa/acc")
         wmdp_4 = run.summary.get("eval_bench/wmdp_bio_robust_rewritten/acc")
-
-        if mmlu is None and wmdp_1 is None and wmdp_2 is None and wmdp_3 is None and wmdp_4 is None:
-            continue
+        l2     = run.summary.get("weight_l2_dist")
+        fnll   = run.summary.get("final_forget_nll")
+        rnll   = run.summary.get("final_retain_nll")
 
         is_base = not any(f"/{m}__" in run.name or f"_{m}__" in run.name for m in KNOWN_METHODS)
 
-        data.append({
-            "Run ID":                  run.id,
-            "Name":                    run.name,
-            "Created":                 run.created_at,
-            "Method":                  method,
-            "MMLU":                    mmlu,
-            "WMDP (Robust)":           wmdp_1,
-            "WMDP (Cloze)":            wmdp_2,
-            "WMDP (Categorized)":      wmdp_3,
-            "WMDP (Robust Rewritten)": wmdp_4,
-            "L2 Dist":                 run.summary.get("weight_l2_dist"),
-            "Forget NLL":              run.summary.get("final_forget_nll"),
-            "Retain NLL":              run.summary.get("final_retain_nll"),
-            "IsBase":                  is_base,
-        })
+        has_eval = mmlu is not None or wmdp_1 is not None or wmdp_4 is not None
+        has_train = fnll is not None or l2 is not None
 
-    if not data:
+        if has_eval:
+            eval_data.append({
+                "Name":                    run.name,
+                "Created":                 run.created_at,
+                "Method":                  method,
+                "MMLU":                    mmlu,
+                "WMDP (Robust)":           wmdp_1,
+                "WMDP (Cloze)":            wmdp_2,
+                "WMDP (Categorized)":      wmdp_3,
+                "WMDP (Robust Rewritten)": wmdp_4,
+                "IsBase":                  is_base,
+            })
+
+        if has_train:
+            train_data.append({
+                "Name":        run.name,
+                "Created":     run.created_at,
+                "L2 Dist":     l2,
+                "Forget NLL":  fnll,
+                "Retain NLL":  rnll,
+            })
+
+    if not eval_data:
         print("No finished runs with evaluation metrics found.")
         return pd.DataFrame()
 
-    df = pd.DataFrame(data)
+    eval_df = pd.DataFrame(eval_data)
+    print(f"\nFound {len(eval_df)} eval runs, {len(train_data)} training runs.")
 
-    # Deduplicate old-style vs new-style run names with identical metrics
+    # Deduplicate eval runs: keep earliest per unique run name
+    eval_df = eval_df.sort_values("Created").drop_duplicates(subset="Name", keep="first")
+
+    # Join training metrics (NLL, L2) by run name — take earliest training run per name
+    if train_data:
+        train_df = pd.DataFrame(train_data)
+        train_df = train_df.sort_values("Created").drop_duplicates(subset="Name", keep="first")
+        df = eval_df.merge(
+            train_df[["Name", "L2 Dist", "Forget NLL", "Retain NLL"]],
+            on="Name", how="left",
+        )
+    else:
+        df = eval_df
+        df["L2 Dist"] = np.nan
+        df["Forget NLL"] = np.nan
+        df["Retain NLL"] = np.nan
+
+    # Deduplicate: old-style flat names ("unlearned_models_EleutherAI_..._npo__...")
+    # vs new-style slash names ("EleutherAI_.../npo__...") that point to the same model.
+    # Extract the config portion (everything after "__") and dedup on that.
+    def _config_key(name: str) -> str:
+        """Extract config portion for dedup: 'org/model/method__config' -> 'method__config'"""
+        if "/" in name:
+            name = name.rsplit("/", 1)[-1]  # take last path segment
+        return name
+
+    df["_config_key"] = df["Name"].apply(_config_key)
     df["_style"] = df["Name"].apply(lambda n: 0 if "/" in n else 1)
-    df["_fp"] = (
-        df["MMLU"].round(4).astype(str) + "|"
-        + df["WMDP (Robust)"].round(4).astype(str) + "|"
-        + df["WMDP (Cloze)"].round(4).astype(str) + "|"
-        + df["WMDP (Categorized)"].round(4).astype(str) + "|"
-        + df["WMDP (Robust Rewritten)"].round(4).astype(str)
-    )
     df = (
-        df.sort_values("_style")
-          .drop_duplicates(subset="_fp", keep="first")
-          .drop(columns=["_style", "_fp"])
+        df.sort_values("_style")          # prefer new-style (has "/")
+          .drop_duplicates(subset="_config_key", keep="first")
+          .drop(columns=["_style", "_config_key"])
     )
 
-    df["Score"] = df["MMLU"] - df["WMDP (Robust)"]
-    print(f"\nProcessed {len(df)} runs.\n")
+    # Score: MMLU - WMDP. Prefer wmdp_bio_robust_rewritten (what eval.py runs),
+    # fall back to wmdp_bio_robust for older runs that only have that variant.
+    wmdp_for_score = df["WMDP (Robust Rewritten)"].fillna(df["WMDP (Robust)"])
+    df["Score"] = df["MMLU"] - wmdp_for_score
+    print(f"After dedup: {len(df)} unique runs.\n")
     return df
 
 
@@ -228,7 +271,7 @@ def main():
     with open(out_file, "w") as f:
         # 1. Best config per method
         f.write("## Best Config Per Method\n\n")
-        f.write("*Best run per method ranked by Score = MMLU − WMDP (Robust)*\n\n")
+        f.write("*Best run per method ranked by Score = MMLU − WMDP (Robust Rewritten, with fallback to Robust)*\n\n")
         best_rows = []
         for method, group in sweeps_df.groupby("Method"):
             ranked = group.dropna(subset=["Score"]).sort_values(
