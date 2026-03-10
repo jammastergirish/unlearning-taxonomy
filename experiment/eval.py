@@ -67,10 +67,9 @@ from utils import model_outdir, pick_best_gpu
 DEFAULT_TASKS = [
     "mmlu",                          # general capabilities (built-in)
     "wikitext",                      # perplexity (built-in)
-    "wmdp_bio_robust",               # robust MCQA (built-in) — primary forgetfulness metric
     "wmdp_bio_robust_rewritten",     # robust MCQA rewritten (custom)
     "wmdp_bio_cloze_verified",       # cloze / perplexity-based (custom)
-    "wmdp_bio_categorized_mcqa",     # MCQA by threat category (custom)
+    "wmdp_bio_categorized_mcqa",     # MCQA by threat category (custom) — includes wmdp_bio_robust as subtask
 ]
 
 # Resolve path to vendored custom task YAMLs (lm_eval_tasks/ in project root)
