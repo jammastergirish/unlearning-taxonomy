@@ -26,7 +26,7 @@ KNOWN_METHODS = [
 # Columns shown in every table
 TABLE_COLS = [
     "Method", "Config", "L2 Dist",
-    "MMLU", "WMDP (Robust Rewritten)", "WMDP (Robust)", "WMDP (Cloze)", "WMDP (Categorized)",
+    "MMLU", "WMDP (Robust)", "WMDP (Cloze)", "WMDP (Categorized)", "WMDP (Robust Rewritten)",
     "MMLU-WMDP", "Forget NLL", "Retain NLL", "Run Name",
 ]
 
@@ -89,11 +89,11 @@ def _score(mmlu, wmdp):
 
 
 def _wmdp_primary(run_row):
-    """Return the best available WMDP score: prefer robust_rewritten, fall back to robust."""
-    rr = run_row.get("WMDP (Robust Rewritten)")
-    if rr is not None and not (isinstance(rr, float) and np.isnan(rr)):
-        return rr
-    return run_row.get("WMDP (Robust)")
+    """Return the best available WMDP score: prefer robust, fall back to robust_rewritten."""
+    r = run_row.get("WMDP (Robust)")
+    if r is not None and not (isinstance(r, float) and np.isnan(r)):
+        return r
+    return run_row.get("WMDP (Robust Rewritten)")
 
 
 def _run_to_row(run_row) -> list[str]:
@@ -105,10 +105,10 @@ def _run_to_row(run_row) -> list[str]:
         _expand_config(_extract_config(str(run_row.get("Name", "")))),
         _fmt(run_row.get("L2 Dist"), 2),
         _fmt(mmlu),
-        _fmt(run_row.get("WMDP (Robust Rewritten)")),
         _fmt(run_row.get("WMDP (Robust)")),
         _fmt(run_row.get("WMDP (Cloze)")),
         _fmt(run_row.get("WMDP (Categorized)")),
+        _fmt(run_row.get("WMDP (Robust Rewritten)")),
         _score(mmlu, wmdp),
         _fmt(run_row.get("Forget NLL"), 3),
         _fmt(run_row.get("Retain NLL"), 3),
@@ -241,9 +241,9 @@ def _fetch_runs(api) -> pd.DataFrame:
           .drop(columns=["_style", "_config_key"])
     )
 
-    # Score: MMLU - WMDP. Prefer wmdp_bio_robust_rewritten (what eval.py runs),
-    # fall back to wmdp_bio_robust for older runs that only have that variant.
-    wmdp_for_score = df["WMDP (Robust Rewritten)"].fillna(df["WMDP (Robust)"])
+    # Score: MMLU - WMDP Robust (primary forgetfulness metric).
+    # Fall back to Robust Rewritten only for runs missing Robust.
+    wmdp_for_score = df["WMDP (Robust)"].fillna(df["WMDP (Robust Rewritten)"])
     df["Score"] = df["MMLU"] - wmdp_for_score
     print(f"After dedup: {len(df)} unique runs.\n")
     return df
@@ -271,7 +271,7 @@ def main():
     with open(out_file, "w") as f:
         # 1. Best config per method
         f.write("## Best Config Per Method\n\n")
-        f.write("*Best run per method ranked by Score = MMLU − WMDP (Robust Rewritten, with fallback to Robust)*\n\n")
+        f.write("*Best run per method ranked by Score = MMLU − WMDP (Robust, with fallback to Robust Rewritten)*\n\n")
         best_rows = []
         for method, group in sweeps_df.groupby("Method"):
             ranked = group.dropna(subset=["Score"]).sort_values(
