@@ -46,8 +46,21 @@ def infer_method(run) -> str | None:
     if method and method != "unknown":
         return method
 
-    # 2. Fall back to regex on the run name
-    return infer_method_from_model_name(run.name)
+    # 2. Try regex on the run name
+    method = infer_method_from_model_name(run.name)
+    if method:
+        return method
+
+    # 3. Try model ID fields stored in the run config
+    #    (layerwise_wmdp_accuracy uses --model; comparison scripts use --model-b)
+    for key in ("model_b", "model"):
+        model_id = run.config.get(key)
+        if model_id:
+            method = infer_method_from_model_name(str(model_id))
+            if method:
+                return method
+
+    return None
 
 
 def main():
