@@ -9,9 +9,9 @@ BASE="EleutherAI/deep-ignorance-unfiltered"
 
 # Priority models first, then the rest
 MODELS=(
-  # "girishgupta/deep-ignorance-unfiltered_unlearned_ga"
-  # "girishgupta/deep-ignorance-unfiltered_unlearned_grad_diff"
-  # "girishgupta/deep-ignorance-unfiltered_unlearned_ga_simple"
+  "girishgupta/deep-ignorance-unfiltered_unlearned_ga"
+  "girishgupta/deep-ignorance-unfiltered_unlearned_grad_diff"
+  "girishgupta/deep-ignorance-unfiltered_unlearned_ga_simple"
   "girishgupta/deep-ignorance-unfiltered_unlearned_npo"
   "girishgupta/deep-ignorance-unfiltered_unlearned_dpo"
   "girishgupta/deep-ignorance-unfiltered_unlearned_rmu"

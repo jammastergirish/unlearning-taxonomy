@@ -512,6 +512,25 @@ class TestInitWandb:
                 result = init_wandb("test_script", self._args())
         assert result is None
 
+    def test_method_tag_added_when_provided(self):
+        """Passing method='ga' must add 'method:ga' to the tags list."""
+        mock_wandb = MagicMock()
+        with patch.dict("os.environ", {"WANDB_API_KEY": "fake-key"}, clear=False):
+            with patch.dict("sys.modules", {"wandb": mock_wandb}):
+                init_wandb("unlearn", self._args(), method="ga")
+        tags = mock_wandb.init.call_args.kwargs["tags"]
+        assert "method:ga" in tags
+
+    def test_no_method_tag_when_method_is_none(self):
+        """When method= is omitted the tags list must only contain the script name."""
+        mock_wandb = MagicMock()
+        with patch.dict("os.environ", {"WANDB_API_KEY": "fake-key"}, clear=False):
+            with patch.dict("sys.modules", {"wandb": mock_wandb}):
+                init_wandb("unlearn", self._args())
+        tags = mock_wandb.init.call_args.kwargs["tags"]
+        assert not any(t.startswith("method:") for t in tags)
+
+
 
 # ---------------------------------------------------------------------------
 # ensure_datasets_exist

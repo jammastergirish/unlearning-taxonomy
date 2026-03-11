@@ -161,3 +161,115 @@ class TestStatsComputation:
         assert classify_granular("model.layers.0.mlp.gate_proj.weight") == "mlp_expand"
         assert classify_granular("model.layers.1.mlp.down_proj.weight") == "mlp_contract"
         assert classify_granular("model.embed_tokens.weight") == "other"
+
+
+# ---------------------------------------------------------------------------
+# _compute_metrics — verify new Wb_* fields
+# ---------------------------------------------------------------------------
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "experiment"))
+from collect_weight_comparison import _compute_metrics
+
+
+class TestComputeMetrics:
+    """Verify _compute_metrics returns the absolute model-B norms added recently."""
+
+    def _pair(self, shape=(8, 8), seed=0):
+        torch.manual_seed(seed)
+        Wa = torch.randn(*shape)
+        Wb = Wa + 0.01 * torch.randn(*shape)
+        return Wa, Wb
+
+    def test_returns_wb_fro(self):
+        Wa, Wb = self._pair()
+        m = _compute_metrics(Wa, Wb)
+        assert "Wb_fro" in m
+        expected = float(Wb.float().norm().item())
+        assert abs(m["Wb_fro"] - expected) < 1e-5
+
+    def test_returns_wb_spectral(self):
+        Wa, Wb = self._pair()
+        m = _compute_metrics(Wa, Wb)
+        assert "Wb_spectral" in m
+        assert m["Wb_spectral"] > 0
+
+    def test_returns_wb_stable_rank(self):
+        Wa, Wb = self._pair()
+        m = _compute_metrics(Wa, Wb)
+        assert "Wb_stable_rank" in m
+        assert m["Wb_stable_rank"] > 0
+
+    def test_self_comparison_wb_equals_wa(self):
+        """When Wa == Wb, absolute norms of both models must be identical.
+
+        Note: spectral norm uses power iteration with a random start, so two
+        independent calls on the same matrix may differ slightly (~1%).
+        """
+        torch.manual_seed(0)
+        W = torch.randn(8, 8)
+        m = _compute_metrics(W, W)
+        assert abs(m["W_fro"] - m["Wb_fro"]) < 1e-5
+        assert abs(m["W_spectral"] - m["Wb_spectral"]) / m["W_spectral"] < 0.02  # within 2%
+        assert abs(m["W_stable_rank"] - m["Wb_stable_rank"]) < 0.5
+
+
+    def test_rel_frobenius_still_correct(self):
+        Wa, Wb = self._pair()
+        m = _compute_metrics(Wa, Wb)
+        dW_fro = float((Wb - Wa).float().norm().item())
+        W_fro = float(Wa.float().norm().item())
+        expected_rel = dW_fro / W_fro
+        assert abs(m["rel_frobenius"] - expected_rel) < 1e-5
+
+
+# ---------------------------------------------------------------------------
+# plot_weight_comparison — verify all 6 PNG files are created
+# ---------------------------------------------------------------------------
+import tempfile
+import pandas as pd
+
+
+class TestPlotWeightComparison:
+    """Verify plot_weight_comparison writes all 6 expected PNG files."""
+
+    def _make_df(self, n_layers=4):
+        """Minimal per_matrix DataFrame with all columns the plotter reads."""
+        rows = []
+        for layer in range(n_layers):
+            for comp in ["qkv", "proj", "mlp_expand", "mlp_contract"]:
+                rows.append({
+                    "layer": layer, "component": comp,
+                    "rel_frobenius": 0.05 + 0.01 * layer,
+                    "W_fro": 10.0 + layer,
+                    "Wb_fro": 9.5 + layer,
+                    "dW_stable_rank": 3.0,
+                    "W_stable_rank": 8.0,
+                    "Wb_stable_rank": 7.5,
+                    "dW_spectral_rel": 0.1,
+                    "W_spectral": 2.0,
+                    "Wb_spectral": 1.9,
+                })
+        return pd.DataFrame(rows)
+
+    def test_all_six_pngs_created(self, temp_dir):
+        from collect_weight_comparison import plot_weight_comparison
+
+        df = self._make_df()
+        csv_path = os.path.join(temp_dir, "per_matrix.csv")
+        df.to_csv(csv_path, index=False)
+
+        plot_weight_comparison(
+            csv_path, temp_dir,
+            model_a="org/baseline", model_b="org/unlearned",
+        )
+
+        expected = [
+            "layer_locality.png",
+            "stable_rank.png",
+            "spectral_norm.png",
+            "absolute_frobenius.png",
+            "absolute_stable_rank.png",
+            "absolute_spectral_norm.png",
+        ]
+        for fname in expected:
+            assert os.path.exists(os.path.join(temp_dir, fname)), f"Missing: {fname}"
+
