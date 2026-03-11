@@ -314,15 +314,20 @@ def _log_wandb_spectrum(
 
 
 def _log_wandb_elbow_table(elbow_rows: list[dict], label_a: str, label_b: str) -> None:
-    """Upload elbow summary as a wandb.Table so W&B can render bar charts.
+    """Upload elbow summary in three complementary ways:
 
-    Columns: component, layer, elbow_a, elbow_b, elbow_dw, elbow_shift.
-    Each row is one (component, layer) pair.
+    1. wandb.Table  — queryable; user can build custom panels from it.
+    2. Per-component wandb.plot.bar — one bar chart per component (baseline /
+       unlearned / ΔW), immediately visible without custom panel setup.
+    3. Individual scalar metrics — one metric per (component, layer, series)
+       so they appear in the standard Charts tab and are comparable across runs.
     """
     try:
         import wandb
         if wandb.run is None or not elbow_rows:
             return
+
+        # 1. Raw table
         cols = ["component", "layer", f"elbow_{label_a}", f"elbow_{label_b}", "elbow_dW", "elbow_shift"]
         table = wandb.Table(columns=cols)
         for r in elbow_rows:
@@ -331,6 +336,41 @@ def _log_wandb_elbow_table(elbow_rows: list[dict], label_a: str, label_b: str) -
                 r["elbow_a"], r["elbow_b"], r["elbow_dw"], r["elbow_shift"],
             )
         wandb.log({"sv_spectrum/elbow_summary": table})
+
+        # 2. Per-component bar charts  (wandb.plot.bar needs a 2-col table:
+        #    label → value; we emit one chart per series so they're legible)
+        from collections import defaultdict
+        by_comp: dict = defaultdict(list)
+        for r in elbow_rows:
+            by_comp[r["component"]].append(r)
+
+        for comp, rows in by_comp.items():
+            for series_key, col_key in [
+                (label_a, "elbow_a"),
+                (label_b, "elbow_b"),
+                ("dW",    "elbow_dw"),
+            ]:
+                bar_table = wandb.Table(columns=["layer", "elbow"])
+                for r in sorted(rows, key=lambda x: x["layer"]):
+                    bar_table.add_data(f"L{r['layer']}", r[col_key])
+                wandb.log({
+                    f"sv_spectrum/elbow_bar/{comp}/{series_key}": wandb.plot.bar(
+                        bar_table, "layer", "elbow",
+                        title=f"{comp} elbow — {series_key}",
+                    )
+                })
+
+        # 3. Individual scalars — comparable across runs in the Charts tab
+        scalar_dict = {}
+        for r in elbow_rows:
+            comp, layer = r["component"], r["layer"]
+            pfx = f"sv_spectrum/elbow/{comp}/L{layer}"
+            scalar_dict[f"{pfx}/baseline"] = r["elbow_a"]
+            scalar_dict[f"{pfx}/unlearned"] = r["elbow_b"]
+            scalar_dict[f"{pfx}/dW"]        = r["elbow_dw"]
+            scalar_dict[f"{pfx}/shift"]     = r["elbow_shift"]
+        wandb.log(scalar_dict)
+
     except Exception:
         pass
 
