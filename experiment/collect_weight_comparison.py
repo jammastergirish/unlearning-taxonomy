@@ -258,8 +258,11 @@ def run_sanity_checks(
 # ---------------------------------------------------------------------------
 
 def plot_weight_comparison(per_matrix_csv: str, outdir: str, title: str = None,
-                           model_a: str = "", model_b: str = ""):
-    """Generate per-component plots from per_matrix.csv."""
+                           model_a: str = "", model_b: str = "") -> list[str]:
+    """Generate per-component plots from per_matrix.csv.
+
+    Returns the list of PNG paths written during this call.
+    """
     import pandas as pd
     import matplotlib.pyplot as plt
 
@@ -271,7 +274,9 @@ def plot_weight_comparison(per_matrix_csv: str, outdir: str, title: str = None,
     components = [c for c in _GRANULAR_COMPONENTS if c in df["component"].values]
     if not components:
         print("No recognized components found — skipping plots")
-        return
+        return []
+
+    written: list[str] = []
 
     # ---- Plot A: Relative Frobenius norm (layer locality) ----
     fig, axes = plt.subplots(1, len(components), figsize=(5 * len(components), 5), squeeze=False)
@@ -288,6 +293,7 @@ def plot_weight_comparison(per_matrix_csv: str, outdir: str, title: str = None,
     fig.tight_layout()
     fig.savefig(os.path.join(outdir, "relative_frobenius.png"))
     plt.close(fig)
+    written.append(os.path.join(outdir, "relative_frobenius.png"))
 
     # ---- Plot A2: Absolute Frobenius norm (baseline vs unlearned) ----
     fig, axes = plt.subplots(1, len(components), figsize=(5 * len(components), 5), squeeze=False)
@@ -308,6 +314,7 @@ def plot_weight_comparison(per_matrix_csv: str, outdir: str, title: str = None,
     fig.tight_layout()
     fig.savefig(os.path.join(outdir, "absolute_frobenius.png"))
     plt.close(fig)
+    written.append(os.path.join(outdir, "absolute_frobenius.png"))
 
     # ---- Plot B: Stable rank of dW ----
     fig, axes = plt.subplots(1, len(components), figsize=(5 * len(components), 5), squeeze=False)
@@ -323,6 +330,7 @@ def plot_weight_comparison(per_matrix_csv: str, outdir: str, title: str = None,
     fig.tight_layout()
     fig.savefig(os.path.join(outdir, "stable_rank_deltaW.png"))
     plt.close(fig)
+    written.append(os.path.join(outdir, "stable_rank_deltaW.png"))
 
     # ---- Plot B2: Absolute stable rank (baseline vs unlearned) ----
     fig, axes = plt.subplots(1, len(components), figsize=(5 * len(components), 5), squeeze=False)
@@ -341,6 +349,7 @@ def plot_weight_comparison(per_matrix_csv: str, outdir: str, title: str = None,
     fig.tight_layout()
     fig.savefig(os.path.join(outdir, "absolute_stable_rank.png"))
     plt.close(fig)
+    written.append(os.path.join(outdir, "absolute_stable_rank.png"))
 
     # ---- Plot C: Relative spectral norm ----
     fig, axes = plt.subplots(1, len(components), figsize=(5 * len(components), 5), squeeze=False)
@@ -356,6 +365,7 @@ def plot_weight_comparison(per_matrix_csv: str, outdir: str, title: str = None,
     fig.tight_layout()
     fig.savefig(os.path.join(outdir, "relative_spectral_norm.png"))
     plt.close(fig)
+    written.append(os.path.join(outdir, "relative_spectral_norm.png"))
 
     # ---- Plot C2: Absolute spectral norm (baseline vs unlearned) ----
     fig, axes = plt.subplots(1, len(components), figsize=(5 * len(components), 5), squeeze=False)
@@ -374,6 +384,7 @@ def plot_weight_comparison(per_matrix_csv: str, outdir: str, title: str = None,
     fig.tight_layout()
     fig.savefig(os.path.join(outdir, "absolute_spectral_norm.png"))
     plt.close(fig)
+    written.append(os.path.join(outdir, "absolute_spectral_norm.png"))
 
     # ---- Plot D: Empirical rank (if present) ----
     if "dW_empirical_rank" in df.columns:
@@ -390,8 +401,10 @@ def plot_weight_comparison(per_matrix_csv: str, outdir: str, title: str = None,
         fig.tight_layout()
         fig.savefig(os.path.join(outdir, "empirical_rank.png"))
         plt.close(fig)
+        written.append(os.path.join(outdir, "empirical_rank.png"))
 
     print(f"All plots written to {outdir}")
+    return written
 
 
 # ---------------------------------------------------------------------------
@@ -701,14 +714,14 @@ def main():
 
     # ---- Plots ----
     if args.plot_outdir:
-        plot_weight_comparison(
+        plot_files = plot_weight_comparison(
             per_matrix_csv,
             args.plot_outdir,
             args.title,
             model_a=args.model_a,
             model_b=args.model_b,
         )
-        log_plots(args.plot_outdir, "weight_plots")
+        log_plots(args.plot_outdir, "weight_plots", files=plot_files)
 
     finish_wandb()
 

@@ -586,18 +586,24 @@ def log_csv_as_table(csv_path: str, key: str = "results"):
         pass
 
 
-def log_plots(outdir: str, key_prefix: str = "plots"):
-    """Glob all PNGs in *outdir* and log them as wandb.Images."""
+def log_plots(outdir: str, key_prefix: str = "plots", files: list[str] | None = None):
+    """Log PNGs as wandb.Images.
+
+    If *files* is given, only those paths are logged.
+    Otherwise, falls back to globbing all *.png in *outdir*.
+    """
     try:
         import wandb
         import glob as _glob
         if wandb.run is None:
             return
-        for png in sorted(_glob.glob(os.path.join(outdir, "*.png"))):
+        paths = files if files is not None else sorted(_glob.glob(os.path.join(outdir, "*.png")))
+        for png in paths:
             name = os.path.splitext(os.path.basename(png))[0]
             wandb.log({f"{key_prefix}/{name}": wandb.Image(png)})
     except Exception:
         pass
+
 
 
 def finish_wandb():
