@@ -101,8 +101,10 @@ SEEDS="42" ./experiment/pipeline.sh
 
 **What gets multi-seed treatment:**
 - **WMDP accuracy** (Step 5): Train/test splits and probe training
-- **Activation analyses** (Steps 3, 8, 9, 11, 12): Text sampling variability
+- **Activation analyses** (Steps 3, 8, 9, 11, 12): Text sampling variability — each seed shuffles the dataset with a different RNG and takes the first `--max-samples` lines, so each seed evaluates a different random subset of texts. Error bars reflect how stable the measured activation patterns are across different samples from the forget/retain sets.
 - **Null space analysis** (Step 7): Weight matrix sampling robustness
+
+Parameter comparison (Step 1) remains deterministic and doesn't use multiple seeds since it computes exact differences between model weights.
 
 **Results structure:**
 ```
@@ -115,8 +117,6 @@ outputs/
       seed_123/
       seed_456/
 ```
-
-Parameter comparison (Step 1) remains deterministic and doesn't use multiple seeds since it computes exact differences between model weights.
 
 ---
 
