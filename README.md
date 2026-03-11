@@ -175,9 +175,14 @@ For every weight matrix `W` in the model, this computes:
 |---|---|---|
 | **Relative Frobenius norm** of $\Delta W$ | $\frac{\lVert \Delta W \rVert_F}{\lVert W \rVert_F}$ | Normalized magnitude of change — what fraction of the original weight moved? Comparable across layers regardless of matrix size. |
 | **Frobenius norm** of $\Delta W$ | $\lVert \Delta W \rVert_F = \sqrt{\sum_{ij} \Delta W_{ij}^2}$ | Raw total magnitude (unnormalized; also recorded for completeness) |
-| **Spectral norm** of $\Delta W$ | $\frac{\sigma_1(\Delta W)}{\sigma_1(W)}$ | Relative worst-case amplification — how much did the dominant singular direction shift? High spectral + low stable rank = a sharp rank-1 spike. |
+| **Frobenius norm** of $W$ (baseline) | $\lVert W_a \rVert_F$ | Absolute weight scale of the baseline model per matrix |
+| **Frobenius norm** of $W$ (unlearned) | $\lVert W_b \rVert_F$ | Absolute weight scale of the unlearned model per matrix — compare with baseline to see if norms grow or shrink |
+| **Spectral norm** of $\Delta W$ (relative) | $\frac{\sigma_1(\Delta W)}{\sigma_1(W)}$ | Relative worst-case amplification — how much did the dominant singular direction shift? High spectral + low stable rank = a sharp rank-1 spike. |
+| **Spectral norm** of $W$ (baseline) | $\sigma_1(W_a)$ | Dominant singular value of the baseline weight matrix |
+| **Spectral norm** of $W$ (unlearned) | $\sigma_1(W_b)$ | Dominant singular value after unlearning — shift reveals changes to the leading computational direction |
 | **Stable rank** of $\Delta W$ | $\frac{\lVert \Delta W \rVert_F^2}{\lVert \Delta W \rVert_2^2}$ | Effective dimensionality of the update. A rank-1 perturbation (e.g., LoRA-style) gives stable rank $\approx 1$. A full-rank rewrite gives stable rank $\approx \min(m,n)$. |
-| **Stable rank** of $W$ | $\frac{\lVert W \rVert_F^2}{\lVert W \rVert_2^2}$ | Baseline dimensionality for comparison |
+| **Stable rank** of $W$ (baseline) | $\frac{\lVert W_a \rVert_F^2}{\lVert W_a \rVert_2^2}$ | Baseline dimensionality for comparison |
+| **Stable rank** of $W$ (unlearned) | $\frac{\lVert W_b \rVert_F^2}{\lVert W_b \rVert_2^2}$ | Whether unlearning increases or decreases the effective rank of the weight matrices |
 | **Empirical rank** (opt-in: `--empirical-rank`) | $\min k$ s.t. $\sum_{i}^{k} \sigma_i^2 \geq 0.99 \cdot \sum \sigma_i^2$ | Discrete count of dimensions capturing 99% of variance (requires full SVD, off by default) |
 
 These metrics are collected at the per-matrix level, then aggregated across three levels of granularity and saved as four CSVs:
@@ -198,7 +203,16 @@ The four **component** types map onto the internal structure of each transformer
 | `mlp_expand` | First MLP linear (hidden → 4×hidden) | `mlp` |
 | `mlp_contract` | Second MLP linear (4×hidden → hidden) | `mlp` |
 
-Plots are generated per component (one panel each), showing layer locality (relative Frobenius norm), stable rank, and relative spectral norm across layers.
+Six PNG plots are generated per component (one panel per component type — `qkv`, `proj`, `mlp_expand`, `mlp_contract`) and automatically uploaded to W&B under the `weight_plots/` key:
+
+| File | What it shows |
+|---|---|
+| `layer_locality.png` | Relative Frobenius norm of ΔW per layer — how much each layer changed, normalized by original weight magnitude |
+| `stable_rank.png` | Stable rank of ΔW per layer — effective dimensionality of the update |
+| `spectral_norm.png` | Relative spectral norm (σ₁(ΔW) / σ₁(W)) per layer — worst-case amplification |
+| `absolute_frobenius.png` | ‖W‖_F per layer for **both** baseline and unlearned model overlaid — shows raw weight scale and how it shifts |
+| `absolute_stable_rank.png` | Stable rank of W per layer for **both** models — shows how the baseline dimensionality changes after unlearning |
+| `absolute_spectral_norm.png` | σ₁(W) per layer for **both** models — shows how the dominant singular value shifts across layers |
 
 **Why this matters:** If unlearning produces low-rank, localized updates (small relative $\lVert \Delta W \rVert_F$ concentrated in a few layers) while filtering produces high-rank, distributed updates, that's direct evidence that unlearning is a *shallow patch* rather than a *deep restructuring*. The component breakdown further reveals *where* within each layer the changes land — e.g., if edits concentrate in `proj` (attention output) rather than `mlp_expand`/`mlp_contract` (knowledge storage), that suggests the intervention is redirecting routing rather than erasing stored associations.
 
@@ -369,47 +383,6 @@ The diagnostics answer an escalating series of questions:
 | **Stability** | Is the new behavior robust or fragile? | 12 |
 
 The thesis prediction is that unlearning methods (CB-LAT) will show: small magnitude, attention-localized, low-rank, nullspace-aligned, minimal activation change, low selectivity, and increased roughness — the full mechanistic signature of a brittle intervention. While filtering will show the opposite across every dimension.
-
-
-**Question:** *How large is the intervention, and where is it concentrated?*
-
-For every weight matrix `W` in the model, this computes:
-
-| Metric | Formula | What it tells you |
-|---|---|---|
-| **Relative Frobenius norm** of $\Delta W$ | $\frac{\lVert \Delta W \rVert_F}{\lVert W \rVert_F}$ | Normalized magnitude of change — what fraction of the original weight moved? Comparable across layers regardless of matrix size. |
-| **Frobenius norm** of $\Delta W$ | $\lVert \Delta W \rVert_F = \sqrt{\sum_{ij} \Delta W_{ij}^2}$ | Raw total magnitude (unnormalized; also recorded for completeness) |
-| **Spectral norm** of $\Delta W$ | $\frac{\sigma_1(\Delta W)}{\sigma_1(W)}$ | Relative worst-case amplification — how much did the dominant singular direction shift? High spectral + low stable rank = a sharp rank-1 spike. |
-| **Stable rank** of $\Delta W$ | $\frac{\lVert \Delta W \rVert_F^2}{\lVert \Delta W \rVert_2^2}$ | Effective dimensionality of the update. A rank-1 perturbation (e.g., LoRA-style) gives stable rank $\approx 1$. A full-rank rewrite gives stable rank $\approx \min(m,n)$. |
-| **Stable rank** of $W$ | $\frac{\lVert W \rVert_F^2}{\lVert W \rVert_2^2}$ | Baseline dimensionality for comparison |
-| **Empirical rank** (opt-in: `--empirical-rank`) | $\min k$ s.t. $\sum_{i}^{k} \sigma_i^2 \geq 0.99 \cdot \sum \sigma_i^2$ | Discrete count of dimensions capturing 99% of variance (requires full SVD, off by default) |
-
-These metrics are collected at the per-matrix level, then aggregated across three levels of granularity and saved as four CSVs:
-
-| CSV | Granularity | Key use |
-|---|---|---|
-| `per_matrix.csv` | One row per weight matrix | Full detail; basis for all other aggregations |
-| `per_component.csv` | One row per component type, averaged across all layers | High-level "which part of the model changed most?" |
-| `per_layer.csv` | One row per (layer, component) pair | Layer-by-layer breakdown within each component |
-| `per_coarse_layer.csv` | One row per (layer, coarse group) pair | Backward-compatible `attn` vs `mlp` split used by Step 4 |
-
-The four **component** types map onto the internal structure of each transformer block:
-
-| Component | What it covers | Coarse group |
-|---|---|---|
-| `qkv` | Query, key, and value projection weights | `attn` |
-| `proj` | Attention output projection | `attn` |
-| `mlp_expand` | First MLP linear (hidden → 4×hidden) | `mlp` |
-| `mlp_contract` | Second MLP linear (4×hidden → hidden) | `mlp` |
-
-Plots are generated per component (one panel each), showing layer locality (relative Frobenius norm), stable rank, and relative spectral norm across layers.
-
-**Why this matters:** If unlearning produces low-rank, localized updates (small relative $\lVert \Delta W \rVert_F$ concentrated in a few layers) while filtering produces high-rank, distributed updates, that's direct evidence that unlearning is a *shallow patch* rather than a *deep restructuring*. The component breakdown further reveals *where* within each layer the changes land — e.g., if edits concentrate in `proj` (attention output) rather than `mlp_expand`/`mlp_contract` (knowledge storage), that suggests the intervention is redirecting routing rather than erasing stored associations.
-
-> [!NOTE]
-> **Kyungeun's addition.** The original script aggregated all attention weights together and all MLP weights together (`attn`/`mlp`). Kyungeun refactored the analysis to track four finer-grained components — `qkv`, `proj`, `mlp_expand`, `mlp_contract` — separately across layers, added cosine similarity and element-wise diff stats to every row, and introduced the `per_component.csv` and `per_layer.csv` (granular) outputs. The old coarse aggregation is preserved as `per_coarse_layer.csv` so that Step 4 still works unchanged.
-
-
 
 ---
 

@@ -103,12 +103,14 @@ def _compute_metrics(
     # Frobenius norms
     dW_fro = float(dW.norm().item())
     W_fro = float(Wa_f.norm().item())
+    Wb_fro = float(Wb_f.norm().item())
     rel_fro = dW_fro / W_fro if W_fro > 0 else float("inf")
     fro_norm_normalized = dW_fro / (n_elem ** 0.5)
 
     # Stable rank and spectral norm (for both dW and W)
     dW_sr, dW_spec = stable_rank_and_spectral(dW, iters=sr_iters)
     W_sr, W_spec = stable_rank_and_spectral(Wa_f, iters=sr_iters)
+    Wb_sr, Wb_spec = stable_rank_and_spectral(Wb_f, iters=sr_iters)
     dW_spec_rel = dW_spec / W_spec if W_spec > 0 else 0.0
 
     row = {
@@ -119,13 +121,16 @@ def _compute_metrics(
         "diff_abs_mean": diff_abs_mean,
         "frobenius_norm": dW_fro,
         "W_fro": W_fro,
+        "Wb_fro": Wb_fro,
         "rel_frobenius": rel_fro,
         "fro_norm_normalized": fro_norm_normalized,
         "diff_spectral_norm": dW_spec,
         "W_spectral": W_spec,
+        "Wb_spectral": Wb_spec,
         "dW_spectral_rel": dW_spec_rel,
         "dW_stable_rank": dW_sr,
         "W_stable_rank": W_sr,
+        "Wb_stable_rank": Wb_sr,
     }
 
     if do_empirical_rank:
@@ -283,7 +288,27 @@ def plot_weight_comparison(per_matrix_csv: str, outdir: str, title: str = None,
     fig.savefig(os.path.join(outdir, "layer_locality.png"))
     plt.close(fig)
 
-    # ---- Plot B: Stable rank ----
+    # ---- Plot A2: Absolute Frobenius norm (baseline vs unlearned) ----
+    fig, axes = plt.subplots(1, len(components), figsize=(5 * len(components), 5), squeeze=False)
+    label_a = model_a.split("/")[-1] if model_a else "baseline"
+    label_b = model_b.split("/")[-1] if model_b else "unlearned"
+    for i, comp in enumerate(components):
+        ax = axes[0, i]
+        sub = df[df["component"] == comp].sort_values("layer")
+        ax.plot(sub["layer"], sub["W_fro"], marker="o", color="tab:blue", label=label_a)
+        if "Wb_fro" in sub.columns:
+            ax.plot(sub["layer"], sub["Wb_fro"], marker="o", color="tab:orange", label=label_b)
+        ax.set_xlabel("Layer")
+        ax.set_ylabel(r"$\|W\|_F$")
+        ax.set_title(f"{comp}")
+        ax.legend(fontsize=7)
+        ax.grid(alpha=0.3)
+    fig.suptitle((title or "Absolute Frobenius norm — baseline vs unlearned") + _subtitle, fontsize=14)
+    fig.tight_layout()
+    fig.savefig(os.path.join(outdir, "absolute_frobenius.png"))
+    plt.close(fig)
+
+    # ---- Plot B: Stable rank of dW ----
     fig, axes = plt.subplots(1, len(components), figsize=(5 * len(components), 5), squeeze=False)
     for i, comp in enumerate(components):
         ax = axes[0, i]
@@ -296,6 +321,24 @@ def plot_weight_comparison(per_matrix_csv: str, outdir: str, title: str = None,
     fig.suptitle((title or "Edit dimensionality — stable rank") + _subtitle, fontsize=14)
     fig.tight_layout()
     fig.savefig(os.path.join(outdir, "stable_rank.png"))
+    plt.close(fig)
+
+    # ---- Plot B2: Absolute stable rank (baseline vs unlearned) ----
+    fig, axes = plt.subplots(1, len(components), figsize=(5 * len(components), 5), squeeze=False)
+    for i, comp in enumerate(components):
+        ax = axes[0, i]
+        sub = df[df["component"] == comp].sort_values("layer")
+        ax.plot(sub["layer"], sub["W_stable_rank"], marker="o", color="tab:blue", label=label_a)
+        if "Wb_stable_rank" in sub.columns:
+            ax.plot(sub["layer"], sub["Wb_stable_rank"], marker="o", color="tab:orange", label=label_b)
+        ax.set_xlabel("Layer")
+        ax.set_ylabel(r"Stable rank of $W$")
+        ax.set_title(f"{comp}")
+        ax.legend(fontsize=7)
+        ax.grid(alpha=0.3)
+    fig.suptitle((title or "Absolute stable rank — baseline vs unlearned") + _subtitle, fontsize=14)
+    fig.tight_layout()
+    fig.savefig(os.path.join(outdir, "absolute_stable_rank.png"))
     plt.close(fig)
 
     # ---- Plot C: Relative spectral norm ----
@@ -311,6 +354,24 @@ def plot_weight_comparison(per_matrix_csv: str, outdir: str, title: str = None,
     fig.suptitle((title or "Spectral norm — worst-case amplification") + _subtitle, fontsize=14)
     fig.tight_layout()
     fig.savefig(os.path.join(outdir, "spectral_norm.png"))
+    plt.close(fig)
+
+    # ---- Plot C2: Absolute spectral norm (baseline vs unlearned) ----
+    fig, axes = plt.subplots(1, len(components), figsize=(5 * len(components), 5), squeeze=False)
+    for i, comp in enumerate(components):
+        ax = axes[0, i]
+        sub = df[df["component"] == comp].sort_values("layer")
+        ax.plot(sub["layer"], sub["W_spectral"], marker="o", color="tab:blue", label=label_a)
+        if "Wb_spectral" in sub.columns:
+            ax.plot(sub["layer"], sub["Wb_spectral"], marker="o", color="tab:orange", label=label_b)
+        ax.set_xlabel("Layer")
+        ax.set_ylabel(r"$\sigma_1(W)$")
+        ax.set_title(f"{comp}")
+        ax.legend(fontsize=7)
+        ax.grid(alpha=0.3)
+    fig.suptitle((title or "Absolute spectral norm — baseline vs unlearned") + _subtitle, fontsize=14)
+    fig.tight_layout()
+    fig.savefig(os.path.join(outdir, "absolute_spectral_norm.png"))
     plt.close(fig)
 
     # ---- Plot D: Empirical rank (if present) ----
@@ -476,9 +537,9 @@ def main():
     per_matrix_fields = [
         "name", "layer", "component", "shape0", "shape1", "elements",
         "cosine_sim", "rel_frobenius", "frobenius_norm", "fro_norm_normalized",
-        "W_fro", "diff_mean", "diff_std", "diff_abs_mean",
-        "diff_spectral_norm", "W_spectral", "dW_spectral_rel",
-        "dW_stable_rank", "W_stable_rank",
+        "W_fro", "Wb_fro", "diff_mean", "diff_std", "diff_abs_mean",
+        "diff_spectral_norm", "W_spectral", "Wb_spectral", "dW_spectral_rel",
+        "dW_stable_rank", "W_stable_rank", "Wb_stable_rank",
     ]
     if args.empirical_rank:
         per_matrix_fields += ["dW_empirical_rank", "W_empirical_rank"]
