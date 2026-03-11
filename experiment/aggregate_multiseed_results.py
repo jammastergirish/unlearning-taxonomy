@@ -195,27 +195,18 @@ def plot_consolidated_activation_comparison(
     title = f"{model_b_label}: Activation Norms ({num_seeds} seeds)"
 
     try:
-        import subprocess as _subprocess
-        plot_cmd = [
-            "uv", "run",
-            os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                         "collect_activation_comparison.py"),
-            "--plot-from-csv", aggregated_csv,
-            "--plot-outdir", plot_outdir,
-            "--title", title,
-            "--model-a", model_a_label,
-            "--model-b", model_b_label,
-        ]
-        print(f"[aggregate] Generating consolidated plots via subprocess...")
-        result = _subprocess.run(plot_cmd, capture_output=False, text=True)
-        if result.returncode != 0:
-            print(f"[aggregate] Warning: plot subprocess exited with code {result.returncode}")
-            return
+        from collect_activation_comparison import plot_activation_comparison
+        plot_activation_comparison(
+            aggregated_csv,
+            plot_outdir,
+            title=title,
+            model_a=model_a_label,
+            model_b=model_b_label,
+        )
         print(f"[aggregate] ✓ Consolidated error-band plots written to {plot_outdir}")
     except Exception as exc:
         print(f"[aggregate] Warning: could not generate consolidated plots: {exc}")
         return
-
 
     # Log the consolidated plots to W&B under a dedicated run
     try:
