@@ -624,6 +624,7 @@ def cb_loss(
     Forget: maximize cosine similarity toward random direction.
     Retain: minimize cosine distance from original activations.
     """
+
     forget_acts = get_layer_activations(model, forget_batch, layer_ids)
     retain_acts = get_layer_activations(model, retain_batch, layer_ids)
 
@@ -743,11 +744,7 @@ def lat_loss(
             except AttributeError:
                 continue
 
-        if layers is None:
-            # If we can’t find the layer structure, fall back to simple GA
-            print(f"[WARNING] LAT: Could not find model layers structure. Falling back to gradient ascent loss.")
-            print(f"[WARNING] LAT: This may happen with non-standard model architectures.")
-            return -nll_loss(model, forget_batch) + nll_loss(model, retain_batch)
+        assert layers is not None, "LAT: Could not find model layers structure"
 
         # Register the hook to inject δ into the target layer
         handle = layers[target_lid].register_forward_hook(make_hook(delta))
@@ -833,12 +830,7 @@ def cb_lat_loss(
         except AttributeError:
             continue
 
-    if layers is None:
-        # Fallback to plain CB
-        print(f"[WARNING] CB-LAT: Could not find model layers structure. Falling back to plain Circuit Breakers.")
-        print(f"[WARNING] CB-LAT: This may happen with non-standard model architectures.")
-        return cb_loss(model, forget_batch, retain_batch, layer_ids,
-                       random_targets, retain_targets, steering_coeff, alpha)
+    assert layers is not None, "CB-LAT: Could not find model layers structure"
 
     # Get hidden shape
     with torch.no_grad():
