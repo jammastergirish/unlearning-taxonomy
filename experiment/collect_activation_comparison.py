@@ -40,10 +40,16 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from utils import comparison_outdir, resolve_device, resolve_dtype, write_csv, init_wandb, infer_method_from_model_name, log_csv_as_table, log_plots, finish_wandb
 
 
-def read_lines(path: str, max_samples: int) -> List[str]:
-    """Read non-empty lines from a text file, up to max_samples."""
+def read_lines(path: str, max_samples: int, seed: int = 42) -> List[str]:
+    """Read non-empty lines, shuffle with *seed*, then return up to max_samples.
+
+    Shuffling ensures each seed samples a different subset of the data,
+    giving real variance across seeds for meaningful error bars.
+    """
     with open(path, "r") as f:
         lines = [line.strip() for line in f if line.strip()]
+    rng = np.random.default_rng(seed)
+    rng.shuffle(lines)
     return lines[:max_samples]
 
 
@@ -407,8 +413,8 @@ def main():
     device = resolve_device(args.device)
     dtype = resolve_dtype(args.dtype, device)
 
-    forget_texts = read_lines(args.forget_text, args.max_samples)
-    retain_texts = read_lines(args.retain_text, args.max_samples)
+    forget_texts = read_lines(args.forget_text, args.max_samples, seed=args.seed)
+    retain_texts = read_lines(args.retain_text, args.max_samples, seed=args.seed)
 
     rows = []
 
