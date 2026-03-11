@@ -1166,7 +1166,7 @@ def _pick_eval_device(requested_device: str) -> str:
     return requested_device
 
 
-def _create_model_card(args, repo_id):
+def _create_model_card(args, repo_id, run_name=None):
     """Create a HuggingFace model card (README.md) with hyperparameters and eval results."""
     import json
     from utils import model_outdir
@@ -1202,6 +1202,8 @@ def _create_model_card(args, repo_id):
         "Gradient accumulation steps": args.grad_accum_steps,
         "Seed": args.seed,
     }
+    if run_name:
+        hyperparams["W&B / run name"] = run_name
 
     # Add method-specific hyperparameters
     if method in ("npo", "simnpo", "dpo"):
@@ -1268,7 +1270,7 @@ def _create_model_card(args, repo_id):
         f"base_model: {args.model}",
         "---",
         "",
-        f"# {os.path.basename(args.outdir)}",
+        f"# {repo_id.split('/')[-1] if '/' in repo_id else repo_id}",
         "",
         summary,
         "",
@@ -2136,10 +2138,13 @@ def main():
                 from huggingface_hub import HfApi
                 api = HfApi(token=hf_token)
                 username = api.whoami()["name"]
-                repo_id = f"{username}/{os.path.basename(args.outdir)}"
+                # Use a clean name: {base_model}_unlearned_{method}
+                base_model_name = args.model.split("/")[-1]
+                repo_id = f"{username}/{base_model_name}_unlearned_{args.method}"
 
                 # Generate model card with hyperparameters and eval results
-                _create_model_card(args, repo_id)
+                run_name = os.path.basename(args.outdir)
+                _create_model_card(args, repo_id, run_name=run_name)
 
                 print(f"[unlearn] Uploading to HuggingFace: {repo_id}")
                 api.create_repo(repo_id, exist_ok=True)
