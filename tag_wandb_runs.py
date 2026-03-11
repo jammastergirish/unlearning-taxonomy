@@ -5,6 +5,7 @@
 #     "wandb",
 #     "python-dotenv",
 #     "tqdm",
+#     "torch",
 # ]
 # ///
 """
