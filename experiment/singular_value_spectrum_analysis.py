@@ -277,6 +277,60 @@ def _plot_elbow_summary(
     plt.close(fig)
 
 
+def _plot_elbow_linechart(
+    elbow_rows: List[Dict],
+    components: List[str],
+    label_a: str,
+    label_b: str,
+    title: str,
+    outpath: str,
+) -> None:
+    """Line plot: layer (x) vs elbow index (y) for baseline, unlearned, and ΔW.
+
+    One subplot per component.  This is the full-resolution view — all layers
+    on the x-axis — as opposed to the bar chart which only shows a few.
+    """
+    if not elbow_rows:
+        return
+
+    import pandas as pd
+    df = pd.DataFrame(elbow_rows)
+    present = [c for c in components if c in df["component"].values]
+    if not present:
+        return
+
+    fig, axes = plt.subplots(1, len(present), figsize=(7 * len(present), 5), squeeze=False)
+
+    for ci, comp in enumerate(present):
+        ax = axes[0, ci]
+        sub = df[df["component"] == comp].sort_values("layer")
+        layers = sub["layer"].tolist()
+
+        ax.plot(layers, sub["elbow_a"],   color="tab:blue",   lw=1.8, marker="o", ms=4, label=label_a)
+        ax.plot(layers, sub["elbow_b"],   color="tab:orange", lw=1.8, marker="s", ms=4, label=label_b)
+        ax.plot(layers, sub["elbow_dw"],  color="tab:red",    lw=1.8, marker="^", ms=4, label="ΔW")
+
+        # Highlight layers where shift ≠ 0
+        for _, row in sub[sub["elbow_shift"] != 0].iterrows():
+            ax.annotate(
+                f"{row['elbow_shift']:+d}",
+                xy=(row["layer"], row["elbow_b"]),
+                xytext=(4, 4), textcoords="offset points",
+                fontsize=7, color="tab:orange",
+            )
+
+        ax.set_xlabel("Layer")
+        ax.set_ylabel("Elbow index (effective rank)")
+        ax.set_title(_COMP_DISPLAY.get(comp, comp))
+        ax.legend(fontsize=8)
+        ax.grid(alpha=0.3)
+
+    fig.suptitle(f"{title}\nElbow index by layer (effective rank at spectrum drop-off)", fontsize=11)
+    fig.tight_layout()
+    fig.savefig(outpath, dpi=130)
+    plt.close(fig)
+
+
 # ---------------------------------------------------------------------------
 # W&B native data logging
 # ---------------------------------------------------------------------------
@@ -359,17 +413,6 @@ def _log_wandb_elbow_table(elbow_rows: list[dict], label_a: str, label_b: str) -
                         title=f"{comp} elbow — {series_key}",
                     )
                 })
-
-        # 3. Individual scalars — comparable across runs in the Charts tab
-        scalar_dict = {}
-        for r in elbow_rows:
-            comp, layer = r["component"], r["layer"]
-            pfx = f"sv_spectrum/elbow/{comp}/L{layer}"
-            scalar_dict[f"{pfx}/baseline"] = r["elbow_a"]
-            scalar_dict[f"{pfx}/unlearned"] = r["elbow_b"]
-            scalar_dict[f"{pfx}/dW"]        = r["elbow_dw"]
-            scalar_dict[f"{pfx}/shift"]     = r["elbow_shift"]
-        wandb.log(scalar_dict)
 
     except Exception:
         pass
@@ -497,7 +540,45 @@ def run_analysis(
             )
             written_pngs.append(dw_plot_path)
 
-    # Summary elbow bar chart — now covers all layers; acts as sentinel figure
+    # Full-layer elbow line chart — PNG + W&B native
+    linechart_path = os.path.join(outdir, "elbow_by_layer.png")
+    present_comps = [c for c in target_components if any(r["component"] == c for r in elbow_rows)]
+    _plot_elbow_linechart(
+        elbow_rows=elbow_rows,
+        components=present_comps,
+        label_a=label_a,
+        label_b=label_b,
+        title=title,
+        outpath=linechart_path,
+    )
+    written_pngs.append(linechart_path)
+
+    # Log the same data as a native W&B line_series (one chart per component)
+    try:
+        import wandb
+        if wandb.run is not None:
+            import pandas as pd
+            df_elbow = pd.DataFrame(elbow_rows)
+            for comp in present_comps:
+                sub = df_elbow[df_elbow["component"] == comp].sort_values("layer")
+                layers = sub["layer"].tolist()
+                wandb.log({
+                    f"sv_spectrum/elbow_by_layer/{comp}": wandb.plot.line_series(
+                        xs=layers,
+                        ys=[
+                            sub["elbow_a"].tolist(),
+                            sub["elbow_b"].tolist(),
+                            sub["elbow_dw"].tolist(),
+                        ],
+                        keys=[label_a, label_b, "ΔW"],
+                        title=f"Elbow by layer — {_COMP_DISPLAY.get(comp, comp)}",
+                        xname="Layer",
+                    )
+                })
+    except Exception:
+        pass
+
+    # Summary elbow bar chart — overview figure for a small subset of layers
     elbow_summary_path = os.path.join(outdir, "sv_spectrum.png")
     _plot_elbow_summary(
         elbow_rows=elbow_rows,
@@ -610,7 +691,7 @@ def main():
         "model_a": args.model_a,
         "model_b": args.model_b,
         "components": args.components,
-        "n_representative_layers": args.n_layers,
+        "n_representative_layers": args.n_overlay_layers,
         "n_matrices_analysed": len(elbow_rows),
     }
     with open(os.path.join(args.outdir, "sv_spectrum_summary.json"), "w") as fh:
