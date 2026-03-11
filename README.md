@@ -207,9 +207,9 @@ Six PNG plots are generated per component (one panel per component type — `qkv
 
 | File | What it shows |
 |---|---|
-| `layer_locality.png` | Relative Frobenius norm of ΔW per layer — how much each layer changed, normalized by original weight magnitude |
-| `stable_rank.png` | Stable rank of ΔW per layer — effective dimensionality of the update |
-| `spectral_norm.png` | Relative spectral norm (σ₁(ΔW) / σ₁(W)) per layer — worst-case amplification |
+| `relative_frobenius.png` | Relative Frobenius norm of ΔW per layer — how much each layer changed, normalized by original weight magnitude |
+| `relative_stable_rank.png` | Stable rank of ΔW per layer — effective dimensionality of the update |
+| `relative_spectral_norm.png` | Relative spectral norm (σ₁(ΔW) / σ₁(W)) per layer — worst-case amplification |
 | `absolute_frobenius.png` | ‖W‖_F per layer for **both** baseline and unlearned model overlaid — shows raw weight scale and how it shifts |
 | `absolute_stable_rank.png` | Stable rank of W per layer for **both** models — shows how the baseline dimensionality changes after unlearning |
 | `absolute_spectral_norm.png` | σ₁(W) per layer for **both** models — shows how the dominant singular value shifts across layers |

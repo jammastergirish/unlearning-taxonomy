@@ -263,9 +263,9 @@ class TestPlotWeightComparison:
         )
 
         expected = [
-            "layer_locality.png",
-            "stable_rank.png",
-            "spectral_norm.png",
+            "relative_frobenius.png",
+            "relative_stable_rank.png",
+            "relative_spectral_norm.png",
             "absolute_frobenius.png",
             "absolute_stable_rank.png",
             "absolute_spectral_norm.png",

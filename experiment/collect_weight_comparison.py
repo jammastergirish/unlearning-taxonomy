@@ -285,7 +285,7 @@ def plot_weight_comparison(per_matrix_csv: str, outdir: str, title: str = None,
     _subtitle = f"\n{model_a.split('/')[-1]} → {model_b.split('/')[-1]}" if model_a else ""
     fig.suptitle((title or "Layer locality — relative Frobenius norm") + _subtitle, fontsize=14)
     fig.tight_layout()
-    fig.savefig(os.path.join(outdir, "layer_locality.png"))
+    fig.savefig(os.path.join(outdir, "relative_frobenius.png"))
     plt.close(fig)
 
     # ---- Plot A2: Absolute Frobenius norm (baseline vs unlearned) ----
@@ -318,9 +318,9 @@ def plot_weight_comparison(per_matrix_csv: str, outdir: str, title: str = None,
         ax.set_ylabel(r"Stable rank of $\Delta W$")
         ax.set_title(f"{comp}")
         ax.grid(alpha=0.3)
-    fig.suptitle((title or "Edit dimensionality — stable rank") + _subtitle, fontsize=14)
+    fig.suptitle((title or "Relative stable rank of ΔW") + _subtitle, fontsize=14)
     fig.tight_layout()
-    fig.savefig(os.path.join(outdir, "stable_rank.png"))
+    fig.savefig(os.path.join(outdir, "relative_stable_rank.png"))
     plt.close(fig)
 
     # ---- Plot B2: Absolute stable rank (baseline vs unlearned) ----
@@ -351,9 +351,9 @@ def plot_weight_comparison(per_matrix_csv: str, outdir: str, title: str = None,
         ax.set_ylabel(r"$\sigma_1(\Delta W) / \sigma_1(W)$")
         ax.set_title(f"{comp}")
         ax.grid(alpha=0.3)
-    fig.suptitle((title or "Spectral norm — worst-case amplification") + _subtitle, fontsize=14)
+    fig.suptitle((title or "Relative spectral norm of ΔW") + _subtitle, fontsize=14)
     fig.tight_layout()
-    fig.savefig(os.path.join(outdir, "spectral_norm.png"))
+    fig.savefig(os.path.join(outdir, "relative_spectral_norm.png"))
     plt.close(fig)
 
     # ---- Plot C2: Absolute spectral norm (baseline vs unlearned) ----
