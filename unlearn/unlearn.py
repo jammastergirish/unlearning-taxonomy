@@ -1182,7 +1182,7 @@ def _create_model_card(args, repo_id):
     method_info = {
         "ga_simple": ("Gradient Ascent (simple)", "Jang et al. 2023", "https://arxiv.org/abs/2210.01504"),
         "ga": ("Gradient Ascent", "Jang et al. 2023", "https://arxiv.org/abs/2210.01504"),
-        "grad_diff": ("Gradient Difference", None, None),
+        "grad_diff": ("Gradient Difference", "Liu et al. 2022", "https://arxiv.org/pdf/2203.12817"),
         "dpo": ("Direct Preference Optimization", "Rafailov et al. 2023", "https://arxiv.org/abs/2305.18290"),
         "npo": ("Negative Preference Optimization", "Zhang et al. 2024", "https://arxiv.org/abs/2404.05868"),
         "simnpo": ("Simple NPO", "Meng et al. 2024", "https://arxiv.org/abs/2405.14734"),

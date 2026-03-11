@@ -590,7 +590,7 @@ The cloze test in particular is the hardest to game: it requires the model to *g
 |---|---|---|---|
 | `ga_simple` | Loss | — | [Jang et al. 2023](https://arxiv.org/abs/2210.01504) |
 | `ga` | Loss | `--retain-weight` | [Jang et al. 2023](https://arxiv.org/abs/2210.01504) |
-| `grad_diff` | Loss | `--forget-weight` | |
+| `grad_diff` | Loss | `--forget-weight` | [Liu et al. 2022](https://arxiv.org/pdf/2203.12817) |
 | `dpo` | Loss | `--beta` | [Rafailov et al. 2023](https://arxiv.org/abs/2305.18290) |
 | `npo` | Loss | `--beta`, `--retain-weight` | [Zhang et al. 2024](https://arxiv.org/abs/2404.05868) |
 | `simnpo` | Loss | `--beta`, `--retain-weight` | [Meng et al. 2024](https://arxiv.org/abs/2405.14734) |
