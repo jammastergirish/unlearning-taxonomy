@@ -366,8 +366,8 @@ def main():
     parser = argparse.ArgumentParser(
         description="Collect per-layer activation norms for two models and compute their differences."
     )
-    parser.add_argument("--model-a", required=True, help="Baseline model (before)")
-    parser.add_argument("--model-b", required=True, help="Target model (after)")
+    parser.add_argument("--model-a", required=False, default=None, help="Baseline model (before)")
+    parser.add_argument("--model-b", required=False, default=None, help="Target model (after)")
     parser.add_argument("--forget-text", help="Path to forget-set prompts (one per line)")
     parser.add_argument("--retain-text", help="Path to retain-set prompts (one per line)")
     parser.add_argument("--device", default="auto")
@@ -387,7 +387,30 @@ def main():
         action="store_true",
         help="Use half-precision caching to reduce disk usage (default: full precision)",
     )
+    parser.add_argument("--plot-from-csv", default=None,
+                        help="Skip model loading — just regenerate plots from this CSV and exit")
     args = parser.parse_args()
+
+    # ---- Plot-only mode (used by aggregate_multiseed_results.py) ----
+    # Runs in the collect_activation_comparison venv which has torch/transformers,
+    # so the module can be imported safely. The aggregator calls us as a subprocess
+    # precisely to avoid needing torch in its own lighter venv.
+    if args.plot_from_csv:
+        if not args.plot_outdir:
+            print("[collect_activation_comparison] --plot-from-csv requires --plot-outdir", flush=True)
+            raise SystemExit(1)
+        plot_activation_comparison(
+            args.plot_from_csv,
+            args.plot_outdir,
+            title=args.title,
+            model_a=args.model_a or "Model A (before)",
+            model_b=args.model_b or "Model B (after)",
+        )
+        return
+
+    if args.model_a is None or args.model_b is None:
+        print("[collect_activation_comparison] --model-a and --model-b are required unless --plot-from-csv is used")
+        raise SystemExit(1)
 
     if args.outdir is None:
         args.outdir = comparison_outdir(args.model_a, args.model_b, suffix="activation_comparison")

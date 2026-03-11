@@ -30,6 +30,8 @@ ACTIVATION_DTYPE="${ACTIVATION_DTYPE:-auto}"
 FORGET="${FORGET_TEXT:-data/forget.txt}"
 RETAIN="${RETAIN_TEXT:-data/retain.txt}"
 SEEDS="${SEEDS:-42 123 456}"
+# Limit samples to control /tmp disk usage (default 64; raise if you have space)
+MAX_SAMPLES="${MAX_SAMPLES:-64}"
 
 MODEL_A="EleutherAI/deep-ignorance-unfiltered"
 
@@ -98,6 +100,8 @@ for i in "${!MODELS[@]}"; do
     --retain-text "$RETAIN" \
     --device "$ACTIVATION_DEVICE" \
     --dtype "$ACTIVATION_DTYPE" \
+    --max-samples "$MAX_SAMPLES" \
+    --cache-fp16 \
     --title "${MODEL_B##*/}: Activation Norms"; then
     echo "[OK] $MODEL_B"
     ((PASSED++))
