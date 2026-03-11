@@ -386,13 +386,19 @@ def run_analysis(
     device: str,
     dtype: torch.dtype,
     target_components: List[str],
-    n_layers: int,
+    n_overlay_layers: int,
     outdir: str,
     label_a: str,
     label_b: str,
     title: str,
 ) -> List[Dict]:
-    """Run the full spectrum analysis. Returns elbow_rows for CSV export."""
+    """Run the full spectrum analysis. Returns elbow_rows for CSV export.
+
+    Elbows are computed for ALL layers (cheap: just scalars from svdvals).
+    Full 3-panel overlay PNGs are only generated for *n_overlay_layers*
+    evenly-spaced representative layers to keep the file count manageable.
+    The dW-all-layers overlay plot uses every layer that was processed.
+    """
     os.makedirs(outdir, exist_ok=True)
 
     # Group names by component
@@ -418,18 +424,16 @@ def run_analysis(
             continue
 
         all_layers = [layer for layer, _ in entries]
-        rep_layers = _pick_representative_layers(all_layers, n=n_layers)
-        print(f"  [sv_spectrum] {comp}: {len(entries)} matrices, "
-              f"representative layers: {rep_layers}")
+        # PNG overlays: only for representative layers
+        overlay_layers = _pick_representative_layers(all_layers, n=n_overlay_layers)
+        print(f"  [sv_spectrum] {comp}: {len(entries)} layers total, "
+              f"overlay PNGs for layers: {overlay_layers}")
 
-        # For the dW-all-layers overlay plot
+        # dW spectra collected for ALL layers (used in the overlay plot)
         dw_layer_spectra: Dict[int, np.ndarray] = {}
         dw_elbows: Dict[int, int] = {}
 
         for layer, name in tqdm(entries, desc=f"  {comp}", unit="matrix", leave=False):
-            if layer not in rep_layers:
-                continue
-
             Wa = loader_a.get_param(name, device, dtype)
             if Wa is None or Wa.ndim != 2:
                 continue
@@ -451,22 +455,6 @@ def run_analysis(
             dw_layer_spectra[layer] = s_dw
             dw_elbows[layer] = elbow_dw
 
-            # Log spectra as native W&B line charts
-            wandb_key = f"sv_spectrum/{comp}_layer{layer}"
-            _log_wandb_spectrum(wandb_key, s_a, s_b, s_dw, label_a, label_b)
-
-            # Per-matrix overlay plot
-            plot_path = os.path.join(outdir, f"{comp}_layer{layer}.png")
-            _plot_overlay(
-                name=name,
-                s_a=s_a, s_b=s_b, s_dw=s_dw,
-                elbow_a=elbow_a, elbow_b=elbow_b, elbow_dw=elbow_dw,
-                label_a=label_a, label_b=label_b,
-                title=title,
-                outpath=plot_path,
-            )
-            written_pngs.append(plot_path)
-
             elbow_rows.append({
                 "component": comp,
                 "layer": layer,
@@ -478,9 +466,26 @@ def run_analysis(
                 "elbow_shift": elbow_b - elbow_a,
             })
 
+            # W&B line chart: only for overlay layers (avoid flooding with 32 charts per component)
+            if layer in overlay_layers:
+                wandb_key = f"sv_spectrum/{comp}_layer{layer}"
+                _log_wandb_spectrum(wandb_key, s_a, s_b, s_dw, label_a, label_b)
+
+                # Per-matrix 3-panel overlay PNG
+                plot_path = os.path.join(outdir, f"{comp}_layer{layer}.png")
+                _plot_overlay(
+                    name=name,
+                    s_a=s_a, s_b=s_b, s_dw=s_dw,
+                    elbow_a=elbow_a, elbow_b=elbow_b, elbow_dw=elbow_dw,
+                    label_a=label_a, label_b=label_b,
+                    title=title,
+                    outpath=plot_path,
+                )
+                written_pngs.append(plot_path)
+
             del Wa, Wb, dW
 
-        # dW overlay across representative layers
+        # dW overlay across ALL layers (now full-resolution)
         if dw_layer_spectra:
             dw_plot_path = os.path.join(outdir, f"dW_spectrum_{comp}.png")
             _plot_dw_all_layers(
@@ -492,7 +497,7 @@ def run_analysis(
             )
             written_pngs.append(dw_plot_path)
 
-    # Summary elbow bar chart (also acts as overview / sentinel figure)
+    # Summary elbow bar chart — now covers all layers; acts as sentinel figure
     elbow_summary_path = os.path.join(outdir, "sv_spectrum.png")
     _plot_elbow_summary(
         elbow_rows=elbow_rows,
@@ -528,8 +533,9 @@ def main():
                     help="Weight dtype for SVD (default fp32; fp16/bf16 work but fp32 is more stable)")
     ap.add_argument("--outdir", default=None,
                     help="Output directory (default: auto-derived from model names)")
-    ap.add_argument("--n-layers", type=int, default=3,
-                    help="Number of representative layers to sample (default: 3 = early/mid/late)")
+    ap.add_argument("--n-overlay-layers", type=int, default=3, dest="n_overlay_layers",
+                    help="Number of layers for which to generate 3-panel overlay PNGs "
+                         "(default: 3 = early/mid/late). Elbows are always computed for ALL layers.")
     ap.add_argument("--components", nargs="+", default=_TARGET_COMPONENTS,
                     choices=_TARGET_COMPONENTS,
                     help="Weight components to analyse (default: all three)")
@@ -576,7 +582,7 @@ def main():
         device=device,
         dtype=dtype,
         target_components=args.components,
-        n_layers=args.n_layers,
+        n_overlay_layers=args.n_overlay_layers,
         outdir=args.outdir,
         label_a=label_a,
         label_b=label_b,
