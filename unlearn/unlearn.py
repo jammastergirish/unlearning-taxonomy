@@ -574,20 +574,20 @@ def rmu_loss(
     loss_device = forget_acts[layer_ids[0]].device
     loss = torch.tensor(0.0, device=loss_device, dtype=next(model.parameters()).dtype)
 
-    for lid in layer_ids:
+    for layer_id in layer_ids:
         # Cast activations to float32 for MSE: F.mse_loss is not auto-promoted
         # by torch.cuda.amp.autocast, so bf16 intermediates cause backward() to
         # fail with "Found dtype BFloat16 but expected Float".
-        fa = forget_acts[lid].float()
-        ra = retain_acts[lid].float()
+        fa = forget_acts[layer_id].float()
+        ra = retain_acts[layer_id].float()
 
         # Forget: MSE toward (steering_coeff * random_direction)
         # Expand the (D,) random vector to match (B, T, D) activation shape
-        target_f = random_targets[lid].float().unsqueeze(0).unsqueeze(0) * steering_coeff
+        target_f = random_targets[layer_id].float().unsqueeze(0).unsqueeze(0) * steering_coeff
         loss = loss + F.mse_loss(fa, target_f.expand_as(fa))
 
         # Retain: MSE toward cached clean activations (from before training)
-        target_r = retain_targets[lid].to(ra.device).float()
+        target_r = retain_targets[layer_id].to(ra.device).float()
         # Handle batch-size mismatch by truncating to the smaller batch
         bsz = min(ra.size(0), target_r.size(0))
         loss = loss + alpha * F.mse_loss(ra[:bsz], target_r[:bsz].detach())
@@ -632,19 +632,19 @@ def cb_loss(
     loss_device = forget_acts[layer_ids[0]].device
     loss = torch.tensor(0.0, device=loss_device, dtype=next(model.parameters()).dtype)
 
-    for lid in layer_ids:
+    for layer_id in layer_ids:
         # Cast to float32: cosine_similarity is not auto-promoted by autocast,
         # causing bf16 backward failures.
-        fa = forget_acts[lid].float().flatten(0, 1)  # (B*T, D)
-        rt = random_targets[lid].float().unsqueeze(0).expand_as(fa) * steering_coeff
+        fa = forget_acts[layer_id].float().flatten(0, 1)  # (B*T, D)
+        rt = random_targets[layer_id].float().unsqueeze(0).expand_as(fa) * steering_coeff
         # We want fa to ALIGN with rt, so minimize negative cosine sim
         cos_sim = F.cosine_similarity(fa, rt, dim=-1)
         loss = loss - cos_sim.mean()  # negate: gradient descent on this = push TOWARD rt
 
         # Retain: keep activations pointing in the same direction as the
         # cached original activations.  (1 - cos_sim) = 0 when perfectly aligned.
-        ra = retain_acts[lid].float()
-        tr = retain_targets[lid].to(ra.device).float()
+        ra = retain_acts[layer_id].float()
+        tr = retain_targets[layer_id].to(ra.device).float()
         bsz = min(ra.size(0), tr.size(0))
         ra_flat = ra[:bsz].flatten(0, 1)
         tr_flat = tr[:bsz].detach().flatten(0, 1)
@@ -918,19 +918,19 @@ def cb_lat_loss(
     # Use the device of the activations for the loss tensor
     loss_device = perturbed_forget_acts[layer_ids[0]].device
     loss = torch.tensor(0.0, device=loss_device, dtype=next(model.parameters()).dtype)
-    for lid in layer_ids:
+    for layer_id in layer_ids:
         # Forget: push PERTURBED activations to be orthogonal to ORIGINAL
         # ReLU ensures we only optimize when cos_sim > 0 (not already orthogonal)
-        perturbed = perturbed_forget_acts[lid].flatten(0, 1)
-        original = original_forget_acts[lid].flatten(0, 1).detach()
+        perturbed = perturbed_forget_acts[layer_id].flatten(0, 1)
+        original = original_forget_acts[layer_id].flatten(0, 1).detach()
         cos_sim = F.cosine_similarity(perturbed, original, dim=-1)
         # Apply ReLU to only penalize positive similarity (want to reach 0)
         orthogonal_loss = F.relu(cos_sim).mean()
         loss = loss + eff_steering * orthogonal_loss
 
         # Retain: preserve original activation directions
-        ra = retain_acts[lid]
-        tr = retain_targets[lid].to(ra.device)  # move cached activations to current device
+        ra = retain_acts[layer_id]
+        tr = retain_targets[layer_id].to(ra.device)  # move cached activations to current device
         bsz = min(ra.size(0), tr.size(0))
         retain_cos = F.cosine_similarity(
             ra[:bsz].flatten(0, 1), tr[:bsz].detach().flatten(0, 1), dim=-1)
@@ -1878,14 +1878,14 @@ def main():
         # Generate a random unit vector per target layer.  During training,
         # RMU/CB will push forget-set activations to align with these vectors.
         # Normalising ensures the direction is what matters, not magnitude.
-        for lid in layer_ids:
+        for layer_id in layer_ids:
             # Create on CPU first, then move to the model's device.
             # Some container setups (e.g. H200 with certain driver configs)
             # fail on torch.randn(..., device='cuda:0') directly but succeed
             # when transferring from CPU via .to(device) (cudaMemcpy path).
             t = torch.randn(hidden_dim, dtype=pt_dtype)
             t = t / t.norm()  # unit norm
-            random_targets[lid] = t.to(device)
+            random_targets[layer_id] = t.to(device)
 
         # Cache the retain-set activations from the ORIGINAL (pre-training)
         # model.  These become the targets that RMU/CB try to preserve.
