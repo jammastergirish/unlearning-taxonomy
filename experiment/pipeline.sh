@@ -165,6 +165,31 @@ else
     --title "$MODEL_A → $MODEL_B"
 fi
 
+# ============================================
+# STEP 1.5: Singular Value Spectrum Analysis
+# ============================================
+echo ""
+echo "=========================================="
+echo "STEP 1.5: Singular Value Spectrum Analysis"
+echo "=========================================="
+echo "Plotting full SV spectra for mlp_expand, mlp_contract, proj (early/mid/late layers)."
+echo "No text data required — weight-only, deterministic."
+
+echo ""
+echo "Analyzing: $MODEL_A → $MODEL_B"
+echo "----------------------------------------"
+if step_complete "${OUTROOT}/${COMP}/sv_spectrum" "sv_spectrum.png"; then
+  echo "  ✓ Already complete — skipping"
+else
+  uv run experiment/singular_value_spectrum_analysis.py \
+    --model-a "$MODEL_A" \
+    --model-b "$MODEL_B" \
+    --device "$PARAM_DEVICE" \
+    --dtype "fp32" \
+    --outdir "${OUTROOT}/${COMP}/sv_spectrum" \
+    --title "$MODEL_A → $MODEL_B"
+fi
+
 # # ============================================
 # # STEP 2: Generate Test Datasets
 # # ============================================
@@ -399,6 +424,7 @@ echo ""
 echo "  ${COMP}/"
 echo "    weight_comparison/      per_matrix.csv, per_component.csv, per_layer.csv, per_coarse_layer.csv"
 echo "    param_plots/            Layer locality, stable rank, spectral norm PNGs"
+echo "    sv_spectrum/            SV spectra per component+layer, dW spectra, elbow_summary.csv"
 echo "    activation_comparison/  activation_comparison.csv + _std columns (multi-seed aggregated)"
 echo "    activation_plots/       Activation norms, diffs PNGs"
 echo "    mlp_attn_analysis/      summary CSV + plots"
