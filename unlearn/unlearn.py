@@ -616,26 +616,26 @@ def cb_loss(
     layer_ids: list[int],
     forget_targets: dict,  # {layer_id: (B, T, D) tensor — cached frozen activations from base model}
     retain_targets: dict,
-    steering_coeff: float,
-    alpha: float,
+    remove_coef: float,
+    retain_coef: float,
     scheduled_coeff: float = 1.0,  # linear warmup: 0→1 over training
 ) -> torch.Tensor:
     """
     Circuit Breakers (Representation Rerouting) using orthogonality loss.
     Forget: ReLU(cos_sim(current, frozen_original)) — push activations orthogonal to base model.
-    Retain: minimize cosine distance from cached original activations.
+    Retain: L2 distance from cached original activations.
 
     Scheduled coefficients (referenced from RRTrainer in
     https://github.com/EleutherAI/unlearn/blob/main/unlearn/reference/cas/unlearning.py):
-      retain ramps 0 → alpha, forget eases steering_coeff → 0.75*steering_coeff
+      retain_coeff ramps 0 → retain_coef, circuit_breaker_coeff eases remove_coef → 0.75*remove_coef
     """
 
     forget_acts = get_layer_activations(model, forget_batch, layer_ids)
     retain_acts = get_layer_activations(model, retain_batch, layer_ids)
 
     # Scheduled coefficients: retain ramps up, forget eases down
-    steering_coeff_eff = steering_coeff * (1.0 - 0.25 * scheduled_coeff)  # effective steering_coeff
-    alpha_eff = alpha * scheduled_coeff  # effective alpha
+    circuit_breaker_coeff = remove_coef * (1.0 - 0.25 * scheduled_coeff)
+    retain_coeff = retain_coef * scheduled_coeff
 
     # Use the device of the activations for the loss tensor
     loss_device = forget_acts[layer_ids[0]].device
@@ -652,14 +652,14 @@ def cb_loss(
         )
         cos_sim = F.cosine_similarity(fa, ft.detach(), dim=-1)
         orthogonal_loss = F.relu(cos_sim).mean()
-        loss = loss + steering_coeff_eff * orthogonal_loss
+        loss = loss + circuit_breaker_coeff * orthogonal_loss
 
         # Retain: keep activations close to cached original activations (L2 distance).
         ra = retain_acts[layer_id].float()
         tr = retain_targets[layer_id].to(ra.device).float()
         bsz = min(ra.size(0), tr.size(0))
         retain_loss = torch.norm(ra[:bsz] - tr[:bsz].detach(), dim=-1, p=2).mean()
-        loss = loss + alpha_eff * retain_loss
+        loss = loss + retain_coeff * retain_loss
 
     return loss
 
@@ -689,7 +689,7 @@ def lat_loss(
     layer_ids: list[int],
     lat_eps: float,      # L∞ budget for the adversarial perturbation
     lat_steps: int,       # number of PGD steps for the inner adversary
-    retain_weight: float = 1.0,
+    retain_coef: float = 1.0,
     scheduled_coeff: float = 1.0,  # linear warmup: 0→1 over training
 ) -> torch.Tensor:
     """
@@ -797,7 +797,7 @@ def lat_loss(
     # Referenced from LATTrainer in https://github.com/EleutherAI/unlearn/blob/main/unlearn/reference/cas/unlearning.py
     eff_forget = 1.0 - scheduled_coeff
 
-    return eff_forget * forget_loss + retain_weight * retain_loss
+    return eff_forget * forget_loss + retain_coef * retain_loss
 
 
 # ---- CB-LAT (combined) -------------------------------------------------
@@ -818,8 +818,8 @@ def cb_lat_loss(
     layer_ids: list[int],
     forget_targets: dict,  # {layer_id: (B, T, D) tensor — cached frozen activations from base model}
     retain_targets: dict,
-    steering_coeff: float,
-    alpha: float,
+    remove_coef: float,
+    retain_coef: float,
     lat_eps: float,
     lat_steps: int,
     scheduled_coeff: float = 1.0,  # linear warmup: 0→1 over training
@@ -902,8 +902,8 @@ def cb_lat_loss(
 
     # Scheduled coefficients: retain ramps up, forget eases down
     # Referenced from RRTrainer in https://github.com/EleutherAI/unlearn/blob/main/unlearn/reference/cas/unlearning.py
-    steering_coeff_eff = steering_coeff * (1.0 - 0.25 * scheduled_coeff)  # effective steering_coeff
-    alpha_eff = alpha * scheduled_coeff  # effective alpha
+    circuit_breaker_coeff = remove_coef * (1.0 - 0.25 * scheduled_coeff)
+    retain_coeff = retain_coef * scheduled_coeff
 
     # CB loss computation using ORTHOGONALITY approach (paper's preferred method)
     # Instead of pushing toward random targets, we push perturbed activations
@@ -933,14 +933,14 @@ def cb_lat_loss(
         )
         cos_sim = F.cosine_similarity(perturbed, ft.detach(), dim=-1)
         orthogonal_loss = F.relu(cos_sim).mean()
-        loss = loss + steering_coeff_eff * orthogonal_loss
+        loss = loss + circuit_breaker_coeff * orthogonal_loss
 
         # Retain: keep activations close to cached original activations (L2 distance).
         ra = retain_acts[layer_id].float()
         tr = retain_targets[layer_id].to(ra.device).float()
         bsz = min(ra.size(0), tr.size(0))
         retain_loss = torch.norm(ra[:bsz] - tr[:bsz].detach(), dim=-1, p=2).mean()
-        loss = loss + alpha_eff * retain_loss
+        loss = loss + retain_coeff * retain_loss
 
     return loss
 
