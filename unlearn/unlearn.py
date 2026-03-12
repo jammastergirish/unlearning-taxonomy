@@ -783,13 +783,11 @@ def lat_loss(
     # Retain loss (standard next-token prediction — no perturbation)
     retain_loss = nll_loss(model, retain_batch)
 
-    # Scheduled coefficients (CAS-style warmup):
-    #   retain ramps 0 → retain_weight, forget eases 1 → 0.75
-    # Reference: https://github.com/EleutherAI/unlearn/blob/main/unlearn/reference/cas/unlearning.py
-    eff_retain = retain_weight * scheduled_coeff
-    eff_forget = 1.0 - 0.25 * scheduled_coeff
+    # Scheduled coefficient: forget fades out over training, retain stays constant.
+    # Referenced from LATTrainer in https://github.com/EleutherAI/unlearn/blob/main/unlearn/reference/cas/unlearning.py
+    eff_forget = 1.0 - scheduled_coeff
 
-    return eff_forget * forget_loss + eff_retain * retain_loss
+    return eff_forget * forget_loss + retain_weight * retain_loss
 
 
 # ---- CB-LAT (combined) -------------------------------------------------
