@@ -654,15 +654,12 @@ def cb_loss(
         orthogonal_loss = F.relu(cos_sim).mean()
         loss = loss + steering_coeff_eff * orthogonal_loss
 
-        # Retain: keep activations pointing in the same direction as the
-        # cached original activations.  (1 - cos_sim) = 0 when perfectly aligned.
+        # Retain: keep activations close to cached original activations (L2 distance).
         ra = retain_acts[layer_id].float()
         tr = retain_targets[layer_id].to(ra.device).float()
         bsz = min(ra.size(0), tr.size(0))
-        ra_flat = ra[:bsz].flatten(0, 1)
-        tr_flat = tr[:bsz].detach().flatten(0, 1)
-        retain_cos = F.cosine_similarity(ra_flat, tr_flat, dim=-1)
-        loss = loss + alpha_eff * (1.0 - retain_cos.mean())  # penalise directional drift
+        retain_loss = torch.norm(ra[:bsz] - tr[:bsz].detach(), dim=-1, p=2).mean()
+        loss = loss + alpha_eff * retain_loss
 
     return loss
 
@@ -938,13 +935,12 @@ def cb_lat_loss(
         orthogonal_loss = F.relu(cos_sim).mean()
         loss = loss + steering_coeff_eff * orthogonal_loss
 
-        # Retain: preserve original activation directions
-        ra = retain_acts[layer_id]
-        tr = retain_targets[layer_id].to(ra.device)  # move cached activations to current device
+        # Retain: keep activations close to cached original activations (L2 distance).
+        ra = retain_acts[layer_id].float()
+        tr = retain_targets[layer_id].to(ra.device).float()
         bsz = min(ra.size(0), tr.size(0))
-        retain_cos = F.cosine_similarity(
-            ra[:bsz].flatten(0, 1), tr[:bsz].detach().flatten(0, 1), dim=-1)
-        loss = loss + alpha_eff * (1.0 - retain_cos.mean())  # penalise directional drift
+        retain_loss = torch.norm(ra[:bsz] - tr[:bsz].detach(), dim=-1, p=2).mean()
+        loss = loss + alpha_eff * retain_loss
 
     return loss
 
