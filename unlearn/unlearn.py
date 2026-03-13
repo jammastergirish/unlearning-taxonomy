@@ -1454,8 +1454,8 @@ PARAM_ABBREV: dict[str, str] = {
     "retain_weight": "rw",
     "forget_weight": "fw",
     "beta": "b",
-    "alpha": "a",
-    "steering_coeff": "sc",
+    "alpha": "rtc",
+    "steering_coeff": "rmc",
     "layer_id": "ly",
     "lat_eps": "le",
     "lat_steps": "ls",
@@ -2118,8 +2118,8 @@ def main():
         print("[unlearn] Running NLL evaluation on held-out split...")
         model.eval()
         with torch.no_grad():
-            # For distributed models, HF's forward() handles device placement automatically
-            eval_device = device if not hasattr(model, 'hf_device_map') else 'cuda' if torch.cuda.is_available() else 'cpu'
+            # Use the model's actual device after training (Accelerate may have moved it)
+            eval_device = next(model.parameters()).device
             forget_nll = sum(nll_loss(model, {k: v.to(eval_device) for k, v in b.items()}).item() for b in eval_forget_batches) / len(eval_forget_batches)
             retain_nll = sum(nll_loss(model, {k: v.to(eval_device) for k, v in b.items()}).item() for b in eval_retain_batches) / len(eval_retain_batches)
         print(f"[unlearn] Eval  forget_NLL={forget_nll:.4f}  retain_NLL={retain_nll:.4f}")
