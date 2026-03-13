@@ -2098,6 +2098,12 @@ def main():
         layer_ids=layer_ids,
     )
 
+    # Force n_gpu=1: batches are pre-made by make_batches(), so we never want
+    # the Trainer to multiply the DataLoader batch size by the number of GPUs.
+    # Without this, having multiple visible GPUs causes n_gpu>1, inflating
+    # batch size and breaking activation cache shape assumptions.
+    trainer.args._n_gpu = 1
+
     # Wire up pretrained_params for wt_dist_reg (set before train() is called)
     if args.method == "wt_dist_reg":
         trainer.set_pretrained_params(pretrained_params)
