@@ -204,6 +204,91 @@ else
 fi
 
 # ============================================
+# STEP 3b: Norm-Controlled Unlearning Experiment
+# ============================================
+echo ""
+echo "=========================================="
+echo "STEP 3b: Norm-Controlled Unlearning"
+echo "=========================================="
+echo "Gradient-ascent unlearning with activation-norm regularisation."
+echo "Tests whether unlearning can avoid the characteristic norm drops."
+
+# Norm-controlled unlearning re-runs the SAME method used to produce MODEL_B,
+# but with --norm-reg-lambda to anchor activation norms to the base model.
+# This lets us compare the original unlearned model (MODEL_B) against a
+# norm-controlled variant to see if the norm drops are avoidable.
+#
+# NORM_CTRL_METHOD is inferred from MODEL_B's name by default (matching the
+# same slug logic as utils.infer_method_from_model_name).
+NORM_CTRL_LAMBDA="${NORM_CTRL_LAMBDA:-1.0}"
+NORM_CTRL_METHOD="${NORM_CTRL_METHOD:-}"
+
+if [[ ! -f "$FORGET" || ! -f "$RETAIN" ]]; then
+  echo "Warning: Data files missing; skipping norm-controlled unlearning."
+elif [[ -z "$NORM_CTRL_METHOD" ]]; then
+  # Try to infer the method from MODEL_B's name
+  NORM_CTRL_METHOD=$(python3 -c "
+import sys; sys.path.insert(0,'.')
+from utils import infer_method_from_model_name
+m = infer_method_from_model_name('$MODEL_B')
+print(m or '')
+")
+  if [[ -z "$NORM_CTRL_METHOD" ]]; then
+    echo "  Could not infer unlearning method from MODEL_B name."
+    echo "  Set NORM_CTRL_METHOD=<method> to enable this step."
+  else
+    echo "  Inferred method: $NORM_CTRL_METHOD (from MODEL_B name)"
+  fi
+fi
+
+if [[ -n "$NORM_CTRL_METHOD" && -f "$FORGET" && -f "$RETAIN" ]]; then
+  echo ""
+  echo "Re-running $NORM_CTRL_METHOD with norm regularisation (λ=$NORM_CTRL_LAMBDA)"
+  echo "  Base model: $MODEL_A"
+  echo "----------------------------------------"
+
+  # Let unlearn.py auto-generate its outdir; we just need to know the path
+  # for the comparison step. build_outdir appends _nrl<lambda> when non-zero.
+  NORM_CTRL_OUTDIR=$(python3 -c "
+import sys, types; sys.path.insert(0,'.')
+from utils import model_outdir
+# Minimal args object matching build_outdir's expectations
+a = types.SimpleNamespace(
+    model='$MODEL_A', method='$NORM_CTRL_METHOD',
+    epochs=1, lr=1e-5, batch_size=4, max_length=512, max_lines=1024,
+    retain_weight=1.0, forget_weight=1.0, beta=0.1, alpha=100.0,
+    steering_coeff=20.0, layer_id='5,6,7', lat_eps=0.1, lat_steps=5,
+    tar_alpha=1.0, tar_lr=1e-5, tar_epochs=1,
+    wt_noise_std=0.02, wt_reg_lambda=0.1,
+    norm_reg_lambda=$NORM_CTRL_LAMBDA, optimizer='adamw', grad_accum_steps=1,
+)
+sys.path.insert(0,'unlearn')
+from unlearn import build_outdir
+print(build_outdir(a))
+")
+  NORM_CTRL_COMP="${MODEL_A_DIR}__to__$(basename "$NORM_CTRL_OUTDIR")"
+
+  if step_complete "$NORM_CTRL_OUTDIR" "config.json"; then
+    echo "  ✓ Norm-controlled model already trained — skipping"
+  else
+    uv run unlearn/unlearn.py \
+      --model "$MODEL_A" \
+      --method "$NORM_CTRL_METHOD" \
+      --forget-data "$FORGET" \
+      --retain-data "$RETAIN" \
+      --norm-reg-lambda "$NORM_CTRL_LAMBDA" \
+      --device "$ACTIVATION_DEVICE" \
+      --dtype "$ACTIVATION_DTYPE" \
+      --no-eval
+  fi
+
+  echo ""
+  echo "Norm-controlled model saved to: $NORM_CTRL_OUTDIR"
+  echo "To run the full distinguishability analysis, re-run the pipeline with:"
+  echo "  MODEL_B=$NORM_CTRL_OUTDIR ./experiment/pipeline.sh"
+fi
+
+# ============================================
 # STEP 4: MLP vs Attention Analysis
 # ============================================
 echo ""

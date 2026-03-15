@@ -115,6 +115,7 @@ class UnlearningTrainer(Trainer):
         random_targets=None, # {layer_id: (D,) unit-norm tensor} for RMU/CB/CB-LAT
         retain_act_cache=None,  # list of {layer_id: (B,T,D)} cached activations
         layer_ids=None,      # list[int] target layer indices
+        norm_reg_target_norms=None,  # list[float] per-layer L2 norm targets
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
@@ -123,6 +124,7 @@ class UnlearningTrainer(Trainer):
         self.random_targets = random_targets or {}
         self.retain_act_cache = retain_act_cache or []
         self.layer_ids = layer_ids or []
+        self.norm_reg_target_norms = norm_reg_target_norms
         self._step_idx = 0  # tracks which retain_act_cache entry to use
         # Per-step component metrics to be flushed into W&B via log().
         # compute_loss() populates this dict; log() drains it.
@@ -152,6 +154,7 @@ class UnlearningTrainer(Trainer):
             "cb_lat_loss":      _mod.cb_lat_loss,
             "wt_dist_loss":     _mod.wt_dist_loss,
             "wt_dist_reg_loss": _mod.wt_dist_reg_loss,
+            "norm_reg_loss":    _mod.norm_reg_loss,
             # primitives needed to decompose losses for W&B logging
             "nll_loss":         _mod.nll_loss,
             "avg_log_prob":     _mod.avg_log_prob,
@@ -309,6 +312,14 @@ class UnlearningTrainer(Trainer):
 
         else:
             raise ValueError(f"[UnlearningTrainer] Unknown method: {method}")
+
+        # ---- Optional activation-norm regularisation (cross-cutting) ----
+        nrl = getattr(a, "norm_reg_lambda", 0.0)
+        if nrl > 0 and self.norm_reg_target_norms is not None:
+            norm_reg_loss = self._loss_fns["norm_reg_loss"]
+            l_norm = norm_reg_loss(model, fb, self.norm_reg_target_norms)
+            loss = loss + nrl * l_norm
+            self._record(norm_reg_loss=l_norm)
 
         self._step_idx += 1
 
