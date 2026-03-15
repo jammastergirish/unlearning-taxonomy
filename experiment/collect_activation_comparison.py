@@ -99,6 +99,7 @@ def cache_hidden_states(
     max_length: int,
     batch_size: int,
     use_half_precision_cache: bool = False,
+    method_name: str = "base",
 ) -> Dict[str, object]:
     """
     Run a model on texts, cache hidden states to disk, and return mean per-token norms.
@@ -108,7 +109,7 @@ def cache_hidden_states(
         - ``mean_l2_norm``: list of mean L2 norms per layer
         - ``num_layers``: number of layers (including embedding layer)
     """
-    model, tokenizer = _load_model(model_id, dtype, device)
+    model, tokenizer = _load_model(model_id, dtype, device, method_name=method_name)
 
     # Accumulators for per-layer mean norms (one entry per layer)
     sum_l1_norms = None
@@ -183,6 +184,7 @@ def compute_activation_diffs(
     max_length: int,
     batch_size: int,
     num_layers: int,
+    method_name: str = "base",
 ) -> Dict[str, List[float]]:
     """
     Run model B on texts, load cached model A hidden states, and compute diffs.
@@ -193,7 +195,7 @@ def compute_activation_diffs(
         - ``mean_diff_l1``: mean L1 norms of (model_B - model_A) hidden states
         - ``mean_diff_l2``: mean L2 norms of (model_B - model_A) hidden states
     """
-    model, tokenizer = _load_model(model_id, dtype, device)
+    model, tokenizer = _load_model(model_id, dtype, device, method_name=method_name)
 
     # Accumulators
     sum_absolute_l1 = [0.0] * num_layers
@@ -413,6 +415,14 @@ def main():
     device = resolve_device(args.device)
     dtype = resolve_dtype(args.dtype, device)
 
+    # Verify both models use the same tokenizer so hidden-state comparisons are valid
+    tok_a = AutoTokenizer.from_pretrained(args.model_a, use_fast=True)
+    tok_b = AutoTokenizer.from_pretrained(args.model_b, use_fast=True)
+    assert tok_a.get_vocab() == tok_b.get_vocab(), (
+        "model-a and model-b have different tokenizer vocabularies — "
+        "activation comparisons would be invalid"
+    )
+
     forget_texts = read_lines(args.forget_text, args.max_samples, seed=args.seed)
     retain_texts = read_lines(args.retain_text, args.max_samples, seed=args.seed)
 
@@ -443,6 +453,7 @@ def main():
             result_b = compute_activation_diffs(
                 args.model_b, texts, cache_dir, device, dtype,
                 args.max_length, args.batch_size, num_layers,
+                method_name=method,
             )
 
             # Collect per-layer results
