@@ -276,28 +276,6 @@ def nll_loss(model, batch: dict) -> torch.Tensor:
     return loss
 
 
-def nll_loss_from_logits(logits: torch.Tensor, batch: dict) -> torch.Tensor:
-    """Compute NLL from pre-computed logits (avoids a redundant forward pass)."""
-    input_ids = batch["input_ids"]
-    attention_mask = batch["attention_mask"]
-    shifted_logits = logits[:, :-1, :].contiguous()
-    labels = input_ids[:, 1:].contiguous()
-    mask = attention_mask[:, 1:].contiguous()
-    loss = chunked_cross_entropy(shifted_logits, labels.view(shifted_logits.size(0), -1))
-    loss = (loss * mask.view(-1)).sum() / mask.sum().clamp(min=1)
-    return loss
-
-
-def avg_log_prob_from_logits(logits: torch.Tensor, batch: dict) -> torch.Tensor:
-    """Compute average per-token log-prob from pre-computed logits."""
-    input_ids = batch["input_ids"]
-    attention_mask = batch["attention_mask"]
-    per_token = log_probs_from_logits(logits[:, :-1, :], input_ids[:, 1:])
-    mask = attention_mask[:, 1:].float()
-    avg = (per_token * mask).sum(dim=-1) / mask.sum(dim=-1).clamp(min=1)
-    return avg
-
-
 def log_probs_from_logits(
     logits: torch.Tensor,
     labels: torch.Tensor,
@@ -986,21 +964,25 @@ def wt_dist_reg_loss(
 #   L_norm_reg = Σ_l (mean_token ‖h_l‖₂  −  target_l)²
 
 def norm_reg_loss(
-    hidden_states: tuple,
-    attention_mask: torch.Tensor,
+    model,
+    batch: dict,
     target_norms: list[float],
 ) -> torch.Tensor:
-    """Compute activation-norm regularisation from pre-computed hidden states.
+    """Compute activation-norm regularisation on a single batch.
 
-    The caller (UnlearningTrainer.compute_loss) is responsible for running
-    a single forward pass with ``output_hidden_states=True`` on the forget
-    batch and passing the resulting hidden_states tuple here.  This avoids
-    a redundant second forward pass that would otherwise roughly double
-    peak activation memory.
+    Does a forward pass with ``output_hidden_states=True`` and penalises
+    the squared difference between each layer's mean per-token L2 norm
+    and the corresponding reference target.
     """
-    mask = attention_mask.float()
+    outputs = model(
+        input_ids=batch["input_ids"],
+        attention_mask=batch["attention_mask"],
+        output_hidden_states=True,
+    )
+    hidden_states = outputs.hidden_states  # tuple of (n_layers + 1) tensors
+    mask = batch["attention_mask"].float()
     token_count = mask.sum().clamp(min=1.0)
-    device = hidden_states[0].device
+    device = next(model.parameters()).device
 
     loss = torch.tensor(0.0, device=device)
     for layer_idx, h in enumerate(hidden_states):

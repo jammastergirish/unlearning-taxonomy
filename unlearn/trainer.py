@@ -158,9 +158,6 @@ class UnlearningTrainer(Trainer):
             # primitives needed to decompose losses for W&B logging
             "nll_loss":         _mod.nll_loss,
             "avg_log_prob":     _mod.avg_log_prob,
-            # logits-reuse variants (avoid redundant forward when norm-reg is active)
-            "nll_loss_from_logits":      _mod.nll_loss_from_logits,
-            "avg_log_prob_from_logits":  _mod.avg_log_prob_from_logits,
         }
 
     # ------------------------------------------------------------------
@@ -234,50 +231,19 @@ class UnlearningTrainer(Trainer):
 
         method = a.method
 
-        # ---- Shared forget forward pass (when norm-reg is active) ----------
-        # Norm-reg needs hidden_states from a forward pass on the forget batch.
-        # We do that pass once here so it is never repeated: norm_reg_loss
-        # receives the hidden_states directly, and for logit-based methods
-        # (ga*, grad_diff, npo, simnpo) we also reuse the logits via
-        # *_from_logits helpers, eliminating a redundant forward pass entirely.
-        _norm_reg_active = (
-            getattr(a, "norm_reg_lambda", 0.0) > 0
-            and self.norm_reg_target_norms is not None
-        )
-        _forget_logits = None
-        _forget_hidden = None
-        if _norm_reg_active:
-            _fwd = model(
-                input_ids=fb["input_ids"],
-                attention_mask=fb["attention_mask"],
-                output_hidden_states=True,
-            )
-            _forget_hidden = _fwd.hidden_states
-            # Logit-based methods can reuse these to skip their own forward pass
-            if method in ("ga_simple", "ga", "grad_diff", "npo", "simnpo"):
-                _forget_logits = _fwd.logits
-
-        # When _forget_logits is available, use from-logits helpers to avoid
-        # a redundant forward pass on the forget batch.
-        nll_loss_from_logits     = self._loss_fns.get("nll_loss_from_logits")
-        avg_log_prob_from_logits = self._loss_fns.get("avg_log_prob_from_logits")
-
         if method == "ga_simple":
-            forget_nll = (nll_loss_from_logits(_forget_logits, fb)
-                          if _forget_logits is not None else nll_loss(model, fb))
+            forget_nll = nll_loss(model, fb)
             loss = -forget_nll
             self._record(forget_loss=forget_nll)
 
         elif method == "ga":
-            forget_nll = (nll_loss_from_logits(_forget_logits, fb)
-                          if _forget_logits is not None else nll_loss(model, fb))
+            forget_nll = nll_loss(model, fb)
             retain_nll = nll_loss(model, rb)
             loss = -forget_nll + a.retain_weight * retain_nll
             self._record(forget_loss=forget_nll, retain_loss=retain_nll)
 
         elif method == "grad_diff":
-            forget_nll = (nll_loss_from_logits(_forget_logits, fb)
-                          if _forget_logits is not None else nll_loss(model, fb))
+            forget_nll = nll_loss(model, fb)
             retain_nll = nll_loss(model, rb)
             loss = retain_nll - a.forget_weight * forget_nll
             self._record(forget_loss=forget_nll, retain_loss=retain_nll)
@@ -286,8 +252,8 @@ class UnlearningTrainer(Trainer):
             loss = dpo_loss(model, self.ref_model, fb, rb, a.beta)
 
         elif method == "npo":
-            lp_forget = (avg_log_prob_from_logits(_forget_logits, fb)
-                         if _forget_logits is not None else avg_log_prob(model, fb))
+            # Recompute components for logging without an extra forward pass
+            lp_forget = avg_log_prob(model, fb)
             with torch.no_grad():
                 import torch.nn.functional as _F
                 ref_lp = avg_log_prob(self.ref_model, fb)
@@ -299,8 +265,7 @@ class UnlearningTrainer(Trainer):
             self._record(npo_term=npo_term, retain_loss=retain_nll)
 
         elif method == "simnpo":
-            lp_forget = (avg_log_prob_from_logits(_forget_logits, fb)
-                         if _forget_logits is not None else avg_log_prob(model, fb))
+            lp_forget = avg_log_prob(model, fb)
             import torch.nn.functional as _F
             simnpo_term = -(2.0 / a.beta) * _F.logsigmoid(-a.beta * lp_forget).mean()
             retain_nll = nll_loss(model, rb)
@@ -349,12 +314,10 @@ class UnlearningTrainer(Trainer):
             raise ValueError(f"[UnlearningTrainer] Unknown method: {method}")
 
         # ---- Optional activation-norm regularisation (cross-cutting) ----
-        if _norm_reg_active:
-            nrl = a.norm_reg_lambda
-            norm_reg_loss_fn = self._loss_fns["norm_reg_loss"]
-            l_norm = norm_reg_loss_fn(
-                _forget_hidden, fb["attention_mask"], self.norm_reg_target_norms,
-            )
+        nrl = getattr(a, "norm_reg_lambda", 0.0)
+        if nrl > 0 and self.norm_reg_target_norms is not None:
+            norm_reg_loss = self._loss_fns["norm_reg_loss"]
+            l_norm = norm_reg_loss(model, fb, self.norm_reg_target_norms)
             loss = loss + nrl * l_norm
             self._record(norm_reg_loss=l_norm)
 
