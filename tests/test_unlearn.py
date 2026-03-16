@@ -748,7 +748,7 @@ class TestLogProbsFromLogits:
 # Muon optimizer: argparse + build_outdir + param-group split
 # ---------------------------------------------------------------------------
 class TestMuonOptimizer:
-    """Tests for --optimizer muon support (no GPU / no muon package required)."""
+    """Tests for --optimizer muon support (no GPU required, uses torch.optim.Muon)."""
 
     def _make_args(self, method="ga_simple", optimizer="adamw", **overrides):
         defaults = {

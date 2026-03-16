@@ -6,7 +6,7 @@
 #     "accelerate>=0.27",
 #     "tqdm",
 #     "wandb",
-#     "muon-optimizer @ git+https://github.com/KellerJordan/Muon",
+#     "torch>=2.6",
 # ]
 #
 # [tool.uv.sources]
@@ -1557,7 +1557,7 @@ def main():
         choices=["adamw", "muon"],
         default="adamw",
         help="Optimizer to use. 'adamw' (default) uses HF Trainer's built-in AdamW. "
-             "'muon' uses MuonWithAuxAdam: Muon for hidden 2D weights, AdamW for everything else.",
+             "'muon' uses MuonAdamW: torch.optim.Muon for hidden 2D weights, AdamW for everything else.",
     )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--grad-clip", type=float, default=1.0,

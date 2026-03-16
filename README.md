@@ -789,7 +789,7 @@ All methods use **full-parameter training** with a cosine-annealed optimizer, ma
 | Gradient accumulation | 1 | `--grad-accum-steps` |
 | Eval split | 10% | `--eval-split` |
 
-**Muon optimizer.** Set `OPTIMIZER=muon` (or `--optimizer muon`) to use [MuonWithAuxAdam](https://github.com/KellerJordan/Muon) instead of AdamW. Muon applies Newton-Schulz-orthogonalised gradient updates to hidden 2D weight matrices (faster convergence) while keeping standard AdamW for embeddings, biases, norms, and `lm_head`. The optimizer suffix `_optmuon` is automatically appended to the folder name, W&B run name, and HuggingFace repo name, keeping Muon and AdamW runs cleanly separated.
+**Muon optimizer.** Set `OPTIMIZER=muon` (or `--optimizer muon`) to use `MuonAdamW` (PyTorch's built-in [`torch.optim.Muon`](https://docs.pytorch.org/docs/stable/generated/torch.optim.Muon.html) + `AdamW`) instead of plain AdamW. Muon applies Newton-Schulz-orthogonalised gradient updates to hidden 2D weight matrices (faster convergence) while keeping standard AdamW for embeddings, biases, norms, and `lm_head`. Requires PyTorch ≥2.6, no external dependencies. The optimizer suffix `_optmuon` is automatically appended to the folder name, W&B run name, and HuggingFace repo name, keeping Muon and AdamW runs cleanly separated.
 
 ##### Per-Method Defaults
 

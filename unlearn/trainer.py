@@ -11,10 +11,10 @@ Why this exists:
 
 Optimizer options (controlled by unlearn_args.optimizer):
   'adamw' (default) — standard HF Trainer AdamW, no extra deps.
-  'muon'            — MuonWithAuxAdam: hidden 2D weights use Muon
+  'muon'            — MuonAdamW: hidden 2D weights use torch.optim.Muon
                       (Newton-Schulz orthogonalised updates), all other params
-                      (embeddings, biases, norms, lm_head) use AdamW internally.
-                      Requires the muon package (declared as a uv inline dep).
+                      (embeddings, biases, norms, lm_head) use AdamW.
+                      Requires PyTorch ≥2.6 (no external deps).
 
 Usage (from unlearn.py main()):
     from unlearn.trainer import UnlearningTrainer, UnlearningDataset, UnlearningCollator
@@ -87,6 +87,87 @@ class UnlearningCollator:
             for k in features[0]["retain"]
         }
         return {"forget": forget, "retain": retain}
+
+
+# ============================================================
+# MuonAdamW — torch.optim.Muon + AdamW composite optimizer
+# ============================================================
+
+# Non-hidden parameter name fragments — these always go to AdamW.
+_NON_HIDDEN = ("embed", "norm", "lm_head", "bias")
+
+
+class MuonAdamW(torch.optim.Optimizer):
+    """Composite optimizer: torch.optim.Muon for 2D hidden matrices,
+    torch.optim.AdamW for everything else (embeddings, biases, norms).
+
+    Presents a single optimizer interface so HF Trainer's LR scheduler
+    can see and update all param_groups.
+
+    Requires PyTorch ≥2.6 (torch.optim.Muon).
+    """
+
+    def __init__(
+        self,
+        named_params,
+        lr=1e-3,
+        muon_momentum=0.95,
+        adam_betas=(0.9, 0.95),
+        adam_eps=1e-8,
+        weight_decay=0.01,
+    ):
+        muon_params, adam_params = [], []
+        for name, p in named_params:
+            if not p.requires_grad:
+                continue
+            if p.ndim >= 2 and not any(k in name for k in _NON_HIDDEN):
+                muon_params.append(p)
+            else:
+                adam_params.append(p)
+
+        self.optimizers = []
+
+        if muon_params:
+            self.muon = torch.optim.Muon(
+                muon_params,
+                lr=lr,
+                momentum=muon_momentum,
+                weight_decay=weight_decay,
+            )
+            self.optimizers.append(self.muon)
+
+        if adam_params:
+            self.adam = torch.optim.AdamW(
+                adam_params,
+                lr=lr,
+                betas=adam_betas,
+                eps=adam_eps,
+                weight_decay=weight_decay,
+            )
+            self.optimizers.append(self.adam)
+
+        # Combine param_groups so HF Scheduler can see/update all LRs.
+        combined_groups = []
+        for opt in self.optimizers:
+            combined_groups.extend(opt.param_groups)
+        super().__init__(combined_groups, {})
+
+        print(
+            f"[MuonAdamW] {len(muon_params)} params → Muon, "
+            f"{len(adam_params)} params → AdamW"
+        )
+
+    def step(self, closure=None):
+        loss = None
+        if closure is not None:
+            loss = closure()
+        for opt in self.optimizers:
+            opt.step()
+        return loss
+
+    def zero_grad(self, set_to_none=True):
+        for opt in self.optimizers:
+            opt.zero_grad(set_to_none=set_to_none)
 
 
 # ============================================================
@@ -319,12 +400,12 @@ class UnlearningTrainer(Trainer):
         self.pretrained_params = pretrained_params
 
     def create_optimizer(self):
-        """Build the optimizer; use MuonWithAuxAdam when --optimizer muon is set.
+        """Build the optimizer; use MuonAdamW when --optimizer muon is set.
 
         Muon is designed for hidden 2D weight matrices only.  Embeddings,
-        biases, layer-norm scales, and the lm_head must still use AdamW —
-        MuonWithAuxAdam handles this with a single unified optimizer object
-        (one param group with use_muon=True, one with use_muon=False).
+        biases, layer-norm scales, and the lm_head must still use AdamW.
+        MuonAdamW composes torch.optim.Muon + torch.optim.AdamW behind a
+        single optimizer interface that HF Trainer's LR scheduler can drive.
 
         For 'adamw' (the default) we fall through to the HF Trainer's own
         create_optimizer(), which handles weight-decay groups, etc.
@@ -333,41 +414,8 @@ class UnlearningTrainer(Trainer):
         if opt_name != "muon":
             return super().create_optimizer()
 
-        from muon import MuonWithAuxAdam
-
-        # Non-hidden parameters: embeddings, layer norms, biases, lm_head.
-        # These go to the auxiliary AdamW inside MuonWithAuxAdam.
-        _NON_HIDDEN = ("embed", "norm", "lm_head", "bias")
-
-        model = self.model
-        hidden_weights, other_params = [], []
-        for name, param in model.named_parameters():
-            if not param.requires_grad:
-                continue
-            is_hidden_2d = (
-                param.ndim >= 2
-                and not any(k in name for k in _NON_HIDDEN)
-            )
-            if is_hidden_2d:
-                hidden_weights.append(param)
-            else:
-                other_params.append(param)
-
-        lr = self.args.learning_rate
-        param_groups = [
-            # Muon group: hidden weight matrices
-            dict(params=hidden_weights, use_muon=True,
-                 lr=lr, weight_decay=0.01),
-            # AdamW group: everything else
-            dict(params=other_params, use_muon=False,
-                 lr=lr, betas=(0.9, 0.95), weight_decay=0.01),
-        ]
-
-        print(
-            f"[UnlearningTrainer] Using MuonWithAuxAdam: "
-            f"{len(hidden_weights)} hidden-weight tensors → Muon, "
-            f"{len(other_params)} other tensors → AdamW"
+        self.optimizer = MuonAdamW(
+            self.model.named_parameters(),
+            lr=self.args.learning_rate,
         )
-
-        self.optimizer = MuonWithAuxAdam(param_groups)
         return self.optimizer
