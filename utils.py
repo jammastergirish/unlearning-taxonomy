@@ -561,6 +561,9 @@ def init_wandb(script_name: str, args, project: str = "cambridge_era", method: s
     tags = [script_name]
     if method:
         tags.append(f"method:{method}")
+    optimizer = getattr(args, "optimizer", None)
+    if optimizer:
+        tags.append(f"optimizer:{optimizer}")
     run = wandb.init(
         project=project,
         name=run_name,

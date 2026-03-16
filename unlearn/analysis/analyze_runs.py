@@ -37,7 +37,7 @@ _ABBREV_TO_LABEL = {
     "b": "Beta", "a": "Alpha", "sc": "Steering Coeff", "ly": "Layers",
     "le": "LAT Epsilon", "ls": "LAT Steps",
     "ta": "TAR Alpha", "tlr": "TAR LR", "tep": "TAR Epochs",
-    "wn": "Noise Std", "wr": "Reg Lambda",
+    "wn": "Noise Std", "wr": "Reg Lambda", "opt": "Optimizer",
 }
 _ABBREV_PATTERN = sorted(_ABBREV_TO_LABEL.keys(), key=len, reverse=True)
 

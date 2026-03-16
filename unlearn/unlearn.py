@@ -1440,6 +1440,7 @@ def save_training_config(args, outdir):
         "eval_split": args.eval_split,
         "grad_clip": args.grad_clip,
         "grad_accum_steps": args.grad_accum_steps,
+        "optimizer": getattr(args, "optimizer", "adamw"),
         "deterministic_algorithms": False,
         "torch_version": torch.__version__,
         "cuda_version": torch.version.cuda if torch.cuda.is_available() else None,
