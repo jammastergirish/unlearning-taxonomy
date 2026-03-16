@@ -333,7 +333,7 @@ class UnlearningTrainer(Trainer):
         if opt_name != "muon":
             return super().create_optimizer()
 
-        from muon import MuonWithAuxAdam
+        from muon import SingleDeviceMuonWithAuxAdam as MuonWithAuxAdam
 
         # Non-hidden parameters: embeddings, layer norms, biases, lm_head.
         # These go to the auxiliary AdamW inside MuonWithAuxAdam.
