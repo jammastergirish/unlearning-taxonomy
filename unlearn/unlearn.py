@@ -1646,14 +1646,20 @@ def main():
     # ---- Setup ----
     device = resolve_device(args.device)
     pt_dtype = resolve_dtype(args.dtype, device)
+    # Deterministic training: seeds alone don't guarantee reproducibility because
+    # many GPU operations (e.g. atomicAdd reductions, cuBLAS workspace selection,
+    # cuDNN algorithm autotuning) are non-deterministic by default. Small floating-
+    # point differences compound over thousands of steps into meaningfully different
+    # models. The settings below enforce bit-for-bit reproducibility at a ~5-20%
+    # speed cost depending on which ops are used.
     torch.manual_seed(args.seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(args.seed)
-        torch.cuda.manual_seed_all(args.seed)
-    os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
-    torch.use_deterministic_algorithms(True)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+        torch.cuda.manual_seed_all(args.seed)  # seed all GPUs for multi-GPU runs
+    os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")  # fixed cuBLAS workspace
+    torch.use_deterministic_algorithms(True)  # error on any non-deterministic op
+    torch.backends.cudnn.deterministic = True  # deterministic convolution algorithms
+    torch.backends.cudnn.benchmark = False  # disable non-deterministic autotuner
 
     print(f"[unlearn] method={args.method}  device={device}  dtype={pt_dtype}")
     print(f"[unlearn] model={args.model}")

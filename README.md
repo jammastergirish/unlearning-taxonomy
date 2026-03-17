@@ -461,6 +461,13 @@ OPTIMIZER=muon EPOCHS=3 LR=3e-05 BATCH_SIZE=32 ./unlearn/run_unlearn.sh ga
 ./unlearn/create_all_unlearning_models.sh
 ```
 
+> **Note — Deterministic training:** All training runs use fully deterministic GPU operations
+> (`torch.use_deterministic_algorithms(True)`, fixed cuBLAS workspaces, deterministic cuDNN, etc.).
+> This guarantees bit-for-bit reproducibility across runs with the same seed, at a modest speed cost
+> (~5-20%). Seeds alone are not sufficient because many GPU operations (reductions, matmuls, convolutions)
+> use non-deterministic algorithms by default, and small floating-point differences compound over
+> thousands of training steps.
+
 However, more likely, you are going to want to sweep through various hyperparameters. This is done by wrapping around the `run_unlearn.sh` script. For example:
 
 ```bash
