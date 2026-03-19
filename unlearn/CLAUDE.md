@@ -67,3 +67,11 @@ If the effective epoch count exceeds 1, flag it.
 
 ## Learning rates
 When training a LoRA the most common successful value is lr=1e-3 or below. When doing SFT it's around 2e-4. Don't push SFT higher than 5e-4 without permission - if you're failing to get learning with an lr above this you likely have a bug.
+
+## Debugging constant or unexpected loss values
+- If a loss term is constant across configs, question whether the computation is correct before explaining it away
+- For losses comparing current vs cached/reference values: reason about what the value should be when the model hasn't changed (typically ~0). If the first-step value is already large, the cache or reference is likely misaligned with the input
+
+## HF Trainer and external state
+- The HF Trainer DataLoader shuffles by default (`RandomSampler`). Any external state indexed by step count (e.g., activation caches) will be misaligned with the actual batch being processed
+- When caching per-batch values for use during training, either disable shuffling (`dataloader_shuffle=False`) or bundle the cache with the dataset so `dataset[idx]` always returns matching data
