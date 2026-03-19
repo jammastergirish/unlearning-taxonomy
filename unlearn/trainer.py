@@ -30,7 +30,7 @@ Usage (from unlearn.py main()):
 """
 
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader, SequentialSampler
 from transformers import Trainer
 
 
@@ -104,7 +104,9 @@ class UnlearningTrainer(Trainer):
       - WandB logging          (TrainingArguments.report_to="wandb")
       - Multi-GPU via Accelerate (transparent)
 
-    We only override compute_loss() to plug in our unlearning objectives.
+    We override compute_loss() to plug in our unlearning objectives,
+    and get_train_dataloader() to disable shuffling (activation caches
+    are indexed by step, so iteration order must match cache order).
     """
 
     def __init__(
@@ -158,6 +160,11 @@ class UnlearningTrainer(Trainer):
             "nll_loss":         _mod.nll_loss,
             "avg_log_prob":     _mod.avg_log_prob,
         }
+
+    def _get_train_sampler(self, dataset=None):
+        """Override to disable shuffling — activation caches are indexed by
+        step count, so dataset iteration order must match cache order."""
+        return SequentialSampler(dataset if dataset is not None else self.train_dataset)
 
     # ------------------------------------------------------------------
     # W&B metric helpers
@@ -298,6 +305,8 @@ class UnlearningTrainer(Trainer):
                 weighted_forget=cb_coeff * orthogonal_raw,
                 weighted_retain=ret_coeff * retain_raw,
                 scheduled_coeff=scheduled_coeff,
+                forget_coeff=cb_coeff,
+                retain_coeff=ret_coeff,
             )
 
         elif method == "lat":
@@ -330,6 +339,8 @@ class UnlearningTrainer(Trainer):
                 weighted_forget=cb_coeff * orthogonal_raw,
                 weighted_retain=ret_coeff * retain_raw,
                 scheduled_coeff=scheduled_coeff,
+                forget_coeff=cb_coeff,
+                retain_coeff=ret_coeff,
             )
 
         elif method == "wt_dist":

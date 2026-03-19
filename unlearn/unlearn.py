@@ -2098,13 +2098,6 @@ def main():
         lr_scheduler_type="cosine",
         max_grad_norm=args.grad_clip if args.grad_clip > 0 else 0.0,
         gradient_accumulation_steps=args.grad_accum_steps,
-        dataloader_shuffle=False,  # REQUIRED: forget_act_cache and retain_act_cache are
-                                   # indexed by step number (trainer.py _step_idx), so dataset
-                                   # iteration order must match cache order. If shuffling is
-                                   # re-enabled, cache entries will pair with wrong batches,
-                                   # silently producing ~constant retain_loss from inter-sample
-                                   # distance instead of model drift. A more robust fix would
-                                   # be bundling cache entries inside UnlearningDataset.
         bf16=use_bf16,
         fp16=use_fp16,
         logging_strategy="steps",
