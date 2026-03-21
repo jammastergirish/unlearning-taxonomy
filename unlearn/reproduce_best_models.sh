@@ -25,7 +25,7 @@ DRY_RUN="${DRY_RUN:-0}"
 METHODS_FILTER=("$@")
 
 # Methods to skip (space-separated list)
-EXCLUDE_METHODS=(cb cb_lat lat)
+EXCLUDE_METHODS=(cb cb_lat lat dpo)
 
 # ── Best configs from best_unlearning_models.md ──────────────────────────
 # Each entry: method|expected_mmlu|expected_wmdp_robust|env_overrides
@@ -97,11 +97,9 @@ for entry in "${BEST_CONFIGS[@]}"; do
   fi
 
   # ── Verify eval scores from the output summary.json ──────────────
-  # Determine the output directory name (mirrors unlearn.py naming convention)
+  # unlearn.py saves to unlearned_models/<base_model_safe>/<method>__<params>
   base_model_safe="EleutherAI_deep-ignorance-unfiltered"
-  # Build run name from env vars to find the output dir
-  # Instead of reconstructing, find the most recent output dir for this method
-  outdir=$(find "outputs/$base_model_safe" -maxdepth 1 -type d -name "${method}__*" | sort -t/ -k3 | tail -1)
+  outdir=$(find "unlearned_models/$base_model_safe" -maxdepth 1 -type d -name "${method}__*" | sort -t/ -k3 | tail -1)
 
   if [[ -z "$outdir" ]]; then
     echo "[reproduce] WARNING: Could not find output directory for $method"
