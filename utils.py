@@ -574,19 +574,21 @@ def write_csv(path: str, rows: List[Dict], fieldnames: List[str]) -> None:
 
 # --- Weights & Biases helpers ---
 def _derive_run_name(script_name: str, args) -> str:
-    """Derive a descriptive W&B run name from args.outdir (last 2 path segments)."""
+    """Derive a descriptive W&B run name from args.outdir.
+
+    Keeps all path segments after stripping common root prefixes so that
+    run names include the model pair and are unambiguous across comparisons.
+    E.g. 'outputs/A__to__B/null_space_analysis/seed_42'
+      -> 'A__to__B/null_space_analysis/seed_42'
+    """
     outdir = getattr(args, "outdir", None)
     if not outdir:
         return script_name
-    # Normalise and grab last 2 non-empty components
     parts = [p for p in outdir.replace("\\", "/").split("/") if p]
-    # Strip common root prefixes like "outputs" or "unlearned_models"
     while parts and parts[0] in ("outputs", "unlearned_models", "plots"):
         parts = parts[1:]
-    if len(parts) >= 2:
-        return "/".join(parts[-2:])
     if parts:
-        return parts[-1]
+        return "/".join(parts)
     return script_name
 
 

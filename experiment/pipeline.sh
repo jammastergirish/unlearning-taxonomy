@@ -87,32 +87,23 @@ else
 fi
 
 # Derive the W&B run name from an outdir (matches _derive_run_name in utils.py).
+# Keeps all segments after stripping root prefixes so names are unambiguous.
 _wandb_run_name_from_outdir() {
   local outdir="$1"
   local stripped="${outdir#outputs/}"
   stripped="${stripped#unlearned_models/}"
   stripped="${stripped#plots/}"
-  echo "$stripped" | awk -F/ '{if(NF>=2) print $(NF-1)"/"$NF; else print $NF}'
+  echo "$stripped"
 }
 
-# Fast local check against the cached W&B data.
+# Fast local check against the cached W&B run names.
 wandb_step_complete() {
   local outdir="$1"
   if [[ "$WANDB_AVAILABLE" != "1" ]]; then return 2; fi
-  local model_a_arg="--model-a $MODEL_A"
-  local model_b_arg=""
-  if [[ "$outdir" != *"__to__"* ]]; then
-    if [[ "$outdir" == *"${MODEL_B_DIR}"* ]]; then
-      model_a_arg="--model-a $MODEL_B"
-    fi
-  else
-    model_b_arg="--model-b $MODEL_B"
-  fi
   local run_name
   run_name=$(_wandb_run_name_from_outdir "$outdir")
-  python3 experiment/check_wandb_complete.py \
-    --check --cache-file "$WANDB_CACHE" \
-    --run-name "$run_name" $model_a_arg $model_b_arg
+  # Simple grep — one run name per line in the cache file
+  grep -qxF "$run_name" "$WANDB_CACHE" 2>/dev/null
 }
 
 # ---- Skip-if-complete helper ----
@@ -143,20 +134,20 @@ run_multiseed_experiment() {
     return
   fi
 
-  # Run experiment for each seed, skipping seeds that already completed in W&B
+  # Run experiment for each seed, skipping seeds whose output dir has results.
+  # (W&B run names for multi-seed steps don't include the model pair, so we
+  # check for local output files instead — they're produced by the same step.)
   local seed_dirs=()
-  local all_seeds_done=true
   for seed in $SEEDS; do
     local seed_outdir="${base_outdir}/seed_${seed}"
     seed_dirs+=("$seed_outdir")
 
-    # Check if this specific seed run already finished
-    if [[ "$FORCE" != "1" ]] && wandb_step_complete "$seed_outdir"; then
-      echo "    Seed $seed: ✓ already complete in W&B — skipping"
+    # Check if this seed already has output files (CSV or JSON)
+    if [[ "$FORCE" != "1" ]] && ls "${seed_outdir}"/*.csv "${seed_outdir}"/*.json 2>/dev/null | head -1 | grep -q .; then
+      echo "    Seed $seed: ✓ output exists — skipping"
       continue
     fi
 
-    all_seeds_done=false
     mkdir -p "$seed_outdir"
     echo "    Running with seed $seed..."
     uv run "$script" "${extra_args[@]}" --seed "$seed" --outdir "$seed_outdir"
