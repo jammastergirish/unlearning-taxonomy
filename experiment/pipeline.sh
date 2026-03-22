@@ -299,7 +299,7 @@ else
   echo ""
   echo "Comparing: $MODEL_A → $MODEL_B"
   echo "----------------------------------------"
-  run_step "Step 3" run_multiseed_experiment "${OUTROOT}/${COMP}/activation_comparison" "activation_comparison.csv" \
+  run_step "Step 3" run_multiseed_experiment "${OUTROOT}/${COMP}/activation_comparison" "summary.json" \
     "experiment/collect_activation_comparison.py" \
     --model-a "$MODEL_A" \
     --model-b "$MODEL_B" \
