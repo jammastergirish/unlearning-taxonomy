@@ -72,13 +72,58 @@ ACTIVATION_DTYPE="${ACTIVATION_DTYPE:-auto}"
 FORGET="${FORGET_TEXT:-data/forget.txt}"
 RETAIN="${RETAIN_TEXT:-data/retain.txt}"
 
+# ---- W&B completion check ----
+# Queries W&B for a finished run matching the given run name and models.
+# Returns 0 if found, 1 if not found, 2 if W&B unavailable (fall back to local).
+# The run name is derived from the outdir the same way _derive_run_name() does:
+#   strip leading outputs/ prefix, take the last 2 path segments.
+_wandb_run_name_from_outdir() {
+  # Strip common root prefixes, then take last 2 segments
+  local outdir="$1"
+  local stripped="${outdir#outputs/}"
+  stripped="${stripped#unlearned_models/}"
+  stripped="${stripped#plots/}"
+  # Take last 2 slash-separated components
+  echo "$stripped" | awk -F/ '{if(NF>=2) print $(NF-1)"/"$NF; else print $NF}'
+}
+
+wandb_step_complete() {
+  local outdir="$1"
+  local model_a_arg="--model-a $MODEL_A"
+  local model_b_arg=""
+  # Per-model steps (e.g. wmdp lens) only have model-a
+  if [[ "$outdir" != *"__to__"* ]]; then
+    # Infer which model from the outdir path
+    if [[ "$outdir" == *"${MODEL_B_DIR}"* ]]; then
+      model_a_arg="--model-a $MODEL_B"
+    fi
+  else
+    model_b_arg="--model-b $MODEL_B"
+  fi
+  local run_name
+  run_name=$(_wandb_run_name_from_outdir "$outdir")
+  uv run experiment/check_wandb_complete.py \
+    --run-name "$run_name" $model_a_arg $model_b_arg 2>/dev/null
+}
+
 # ---- Skip-if-complete helper ----
 # Usage: step_complete <dir> <sentinel_file>
-# Returns 0 (true) if the sentinel exists and --force was not passed.
+# Checks W&B first (authoritative), falls back to local sentinel file.
+# Returns 0 (true) if the step has already completed.
 step_complete() {
   local dir="$1" sentinel="$2"
   if [[ "$FORCE" == "1" ]]; then return 1; fi
-  [[ -f "${dir}/${sentinel}" ]]
+  # Check local sentinel first (fast, no network)
+  if [[ -f "${dir}/${sentinel}" ]]; then return 0; fi
+  # Check W&B (catches cases where local files are missing but run completed)
+  wandb_step_complete "$dir"
+  local rc=$?
+  if [[ $rc -eq 0 ]]; then
+    echo "  (completed in W&B, local sentinel missing)"
+    return 0
+  fi
+  # rc=1 means not found, rc=2 means W&B unavailable — either way, not complete
+  return 1
 }
 
 # ---- Multi-seed experiment runner ----
@@ -93,15 +138,23 @@ run_multiseed_experiment() {
     return
   fi
 
-  # Run experiment for each seed
+  # Run experiment for each seed, skipping seeds that already completed in W&B
   local seed_dirs=()
+  local all_seeds_done=true
   for seed in $SEEDS; do
     local seed_outdir="${base_outdir}/seed_${seed}"
-    mkdir -p "$seed_outdir"
+    seed_dirs+=("$seed_outdir")
 
+    # Check if this specific seed run already finished
+    if [[ "$FORCE" != "1" ]] && wandb_step_complete "$seed_outdir" 2>/dev/null; then
+      echo "    Seed $seed: ✓ already complete in W&B — skipping"
+      continue
+    fi
+
+    all_seeds_done=false
+    mkdir -p "$seed_outdir"
     echo "    Running with seed $seed..."
     uv run "$script" "${extra_args[@]}" --seed "$seed" --outdir "$seed_outdir"
-    seed_dirs+=("$seed_outdir")
   done
 
   # Aggregate results across seeds
