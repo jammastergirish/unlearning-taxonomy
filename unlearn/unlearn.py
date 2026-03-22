@@ -963,6 +963,19 @@ def wt_dist_reg_loss(
 #
 #   L_norm_reg = Σ_l (mean_token ‖h_l‖₂  −  target_l)²
 
+def _resolve_layers(model):
+    """Return the nn.ModuleList of transformer layers for common HF architectures."""
+    for attr in ("model.layers", "gpt_neox.layers", "transformer.h"):
+        obj = model
+        try:
+            for part in attr.split("."):
+                obj = getattr(obj, part)
+            return obj
+        except AttributeError:
+            continue
+    raise RuntimeError("norm_reg: could not locate transformer layers in model")
+
+
 def norm_reg_loss(
     model,
     batch: dict,
@@ -970,27 +983,45 @@ def norm_reg_loss(
 ) -> torch.Tensor:
     """Compute activation-norm regularisation on a single batch.
 
-    Does a forward pass with ``output_hidden_states=True`` and penalises
-    the squared difference between each layer's mean per-token L2 norm
-    and the corresponding reference target.
+    Uses forward hooks to compute each layer's mean per-token L2 norm
+    during the forward pass, so full hidden-state tensors are never kept
+    in memory simultaneously.
     """
-    outputs = model(
-        input_ids=batch["input_ids"],
-        attention_mask=batch["attention_mask"],
-        output_hidden_states=True,
-    )
-    hidden_states = outputs.hidden_states  # tuple of (n_layers + 1) tensors
-    mask = batch["attention_mask"].float()
+    layers = _resolve_layers(model)
+    mask = batch["attention_mask"]                         # int tensor, no .float() needed
     token_count = mask.sum().clamp(min=1.0)
     device = next(model.parameters()).device
 
+    # Collect scalar mean-L2 norms per layer via hooks.
+    # Each hook computes the norm and stores a differentiable scalar.
+    layer_norms: list[torch.Tensor] = []
+    handles: list[torch.utils.hooks.RemovableHook] = []
+
+    def make_hook(storage_list):
+        def hook_fn(module, input, output):
+            hidden = output[0] if isinstance(output, tuple) else output
+            l2 = torch.linalg.vector_norm(hidden.float(), ord=2, dim=-1)  # [B, T]
+            mean_l2 = (l2 * mask.to(l2.device)).sum() / token_count.to(l2.device)
+            storage_list.append(mean_l2)
+        return hook_fn
+
+    for layer in layers:
+        handles.append(layer.register_forward_hook(make_hook(layer_norms)))
+
+    try:
+        model(
+            input_ids=batch["input_ids"],
+            attention_mask=batch["attention_mask"],
+        )
+    finally:
+        for h in handles:
+            h.remove()
+
     loss = torch.tensor(0.0, device=device)
-    for layer_idx, h in enumerate(hidden_states):
-        if layer_idx >= len(target_norms):
+    for idx, mean_l2 in enumerate(layer_norms):
+        if idx >= len(target_norms):
             break
-        l2 = torch.linalg.vector_norm(h.float(), ord=2, dim=-1)  # [B, T]
-        mean_l2 = (l2 * mask).sum() / token_count
-        loss = loss + (mean_l2 - target_norms[layer_idx]) ** 2
+        loss = loss + (mean_l2 - target_norms[idx]) ** 2
 
     return loss
 
@@ -1004,30 +1035,46 @@ def compute_reference_norms(
 ) -> list[float]:
     """Compute mean per-layer L2 activation norms from the model.
 
-    Uses the first *n_batches* forget batches (already tokenised) so that
-    the reference norms match the data distribution seen during unlearning.
+    Uses forward hooks so that full hidden-state tensors are never kept
+    in memory across layers.  Only scalar sums are accumulated.
     """
     model.eval()
-    sum_l2: list[float] | None = None
+    layers = _resolve_layers(model)
+    n_layers = len(layers)
+    sum_l2 = [0.0] * n_layers
     total_tokens = 0.0
 
     limit = n_batches if n_batches else len(batches)
     for batch in batches[:limit]:
         batch_dev = {k: v.to(device) for k, v in batch.items()}
-        outputs = model(
-            input_ids=batch_dev["input_ids"],
-            attention_mask=batch_dev["attention_mask"],
-            output_hidden_states=True,
-        )
-        hidden_states = outputs.hidden_states
-        if sum_l2 is None:
-            sum_l2 = [0.0] * len(hidden_states)
-
-        mask = batch_dev["attention_mask"].float()
+        mask = batch_dev["attention_mask"]
         total_tokens += float(mask.sum().item())
-        for i, h in enumerate(hidden_states):
-            l2 = torch.linalg.vector_norm(h.float(), ord=2, dim=-1)
-            sum_l2[i] += float((l2 * mask).sum().item())
+
+        # Per-batch accumulator populated by hooks
+        batch_norms: list[float] = []
+        handles: list[torch.utils.hooks.RemovableHook] = []
+
+        def make_hook(storage_list, layer_mask):
+            def hook_fn(module, input, output):
+                hidden = output[0] if isinstance(output, tuple) else output
+                l2 = torch.linalg.vector_norm(hidden.float(), ord=2, dim=-1)
+                storage_list.append(float((l2 * layer_mask.to(l2.device)).sum().item()))
+            return hook_fn
+
+        for layer in layers:
+            handles.append(layer.register_forward_hook(make_hook(batch_norms, mask)))
+
+        try:
+            model(
+                input_ids=batch_dev["input_ids"],
+                attention_mask=batch_dev["attention_mask"],
+            )
+        finally:
+            for h in handles:
+                h.remove()
+
+        for i, val in enumerate(batch_norms):
+            sum_l2[i] += val
 
     model.train()
     return [s / total_tokens if total_tokens else 0.0 for s in sum_l2]
