@@ -73,27 +73,34 @@ FORGET="${FORGET_TEXT:-data/forget.txt}"
 RETAIN="${RETAIN_TEXT:-data/retain.txt}"
 
 # ---- W&B completion check ----
-# Queries W&B for a finished run matching the given run name and models.
-# Returns 0 if found, 1 if not found, 2 if W&B unavailable (fall back to local).
-# The run name is derived from the outdir the same way _derive_run_name() does:
-#   strip leading outputs/ prefix, take the last 2 path segments.
+# At startup, fetch all finished runs from W&B into a local cache file.
+# Subsequent step_complete checks grep this cache — no network calls per step.
+WANDB_CACHE="/tmp/wandb_finished_runs_${$}.txt"
+echo "[pipeline] Fetching completed runs from W&B..."
+if uv run experiment/check_wandb_complete.py --fetch --cache-file "$WANDB_CACHE" 2>/dev/null; then
+  WANDB_AVAILABLE=1
+  echo "[pipeline] W&B cache ready."
+else
+  WANDB_AVAILABLE=0
+  echo "[pipeline] W&B unavailable — using local sentinel files as fallback."
+fi
+
+# Derive the W&B run name from an outdir (matches _derive_run_name in utils.py).
 _wandb_run_name_from_outdir() {
-  # Strip common root prefixes, then take last 2 segments
   local outdir="$1"
   local stripped="${outdir#outputs/}"
   stripped="${stripped#unlearned_models/}"
   stripped="${stripped#plots/}"
-  # Take last 2 slash-separated components
   echo "$stripped" | awk -F/ '{if(NF>=2) print $(NF-1)"/"$NF; else print $NF}'
 }
 
+# Fast local check against the cached W&B data.
 wandb_step_complete() {
   local outdir="$1"
+  if [[ "$WANDB_AVAILABLE" != "1" ]]; then return 2; fi
   local model_a_arg="--model-a $MODEL_A"
   local model_b_arg=""
-  # Per-model steps (e.g. wmdp lens) only have model-a
   if [[ "$outdir" != *"__to__"* ]]; then
-    # Infer which model from the outdir path
     if [[ "$outdir" == *"${MODEL_B_DIR}"* ]]; then
       model_a_arg="--model-a $MODEL_B"
     fi
@@ -102,8 +109,9 @@ wandb_step_complete() {
   fi
   local run_name
   run_name=$(_wandb_run_name_from_outdir "$outdir")
-  uv run experiment/check_wandb_complete.py \
-    --run-name "$run_name" $model_a_arg $model_b_arg 2>/dev/null
+  python3 experiment/check_wandb_complete.py \
+    --check --cache-file "$WANDB_CACHE" \
+    --run-name "$run_name" $model_a_arg $model_b_arg
 }
 
 # ---- Skip-if-complete helper ----
@@ -142,7 +150,7 @@ run_multiseed_experiment() {
     seed_dirs+=("$seed_outdir")
 
     # Check if this specific seed run already finished
-    if [[ "$FORCE" != "1" ]] && wandb_step_complete "$seed_outdir" 2>/dev/null; then
+    if [[ "$FORCE" != "1" ]] && wandb_step_complete "$seed_outdir"; then
       echo "    Seed $seed: ✓ already complete in W&B — skipping"
       continue
     fi
@@ -666,4 +674,7 @@ if [[ $STEP_FAILURES -gt 0 ]]; then
 fi
 echo "Tip: rerun with --force to regenerate all results."
 echo "Tip: set SEEDS=\"42 123 456 789 999\" for more robust statistics."
+
+# Clean up W&B cache
+rm -f "$WANDB_CACHE"
 echo ""

@@ -6,31 +6,29 @@
 # ///
 
 """
-Check whether a W&B run for a given pipeline step has already completed.
+Fetch all finished W&B runs for the project and cache them locally.
 
-Used by pipeline.sh to skip steps that have finished runs in W&B,
-even if local sentinel files are missing.
-
-Exit codes:
-  0  — a matching finished run was found (step is complete)
-  1  — no matching finished run found (step should run)
-  2  — W&B unavailable or not configured (fall back to local check)
+Called once at pipeline startup. Writes a simple text file listing all
+finished run names + their model_a/model_b config values, one per line.
+Subsequent completion checks are just grep against this file — no
+network calls needed.
 
 Usage:
-  python experiment/check_wandb_complete.py \\
+  # Fetch and cache (run once at pipeline start):
+  uv run experiment/check_wandb_complete.py --fetch \\
+    --cache-file /tmp/wandb_finished_runs.txt
+
+  # Check a specific step (fast, local grep):
+  uv run experiment/check_wandb_complete.py --check \\
+    --cache-file /tmp/wandb_finished_runs.txt \\
     --run-name "null_space_analysis/seed_42" \\
     --model-a "EleutherAI/deep-ignorance-unfiltered" \\
     --model-b "girishgupta/deep-ignorance-unfiltered_unlearned_dpo"
 
-  # For single-seed steps (no seed in run name):
-  python experiment/check_wandb_complete.py \\
-    --run-name "weight_comparison" \\
-    --model-a "..." --model-b "..."
-
-  # For per-model steps (only model-a matters, e.g. wmdp lens):
-  python experiment/check_wandb_complete.py \\
-    --run-name "wmdp_logit_lens/seed_42" \\
-    --model-a "EleutherAI/deep-ignorance-unfiltered"
+Exit codes:
+  0  — (fetch) cache written successfully / (check) matching run found
+  1  — (fetch) failed / (check) no matching run
+  2  — W&B unavailable or not configured
 """
 
 import argparse
@@ -38,95 +36,133 @@ import os
 import sys
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Check if a W&B run for a pipeline step has completed."
-    )
-    parser.add_argument("--run-name", required=True,
-                        help="Expected W&B run display name (e.g. 'null_space_analysis/seed_42')")
-    parser.add_argument("--model-a", required=True, help="Model A identifier")
-    parser.add_argument("--model-b", default=None, help="Model B identifier (omit for per-model steps)")
-    parser.add_argument("--project", default="cambridge_era", help="W&B project name")
-    args = parser.parse_args()
+def fetch_finished_runs(project: str, cache_file: str) -> int:
+    """Fetch all finished runs from W&B and write to cache file.
 
+    Each line: run_name<TAB>model_a<TAB>model_b
+    """
     if not os.environ.get("WANDB_API_KEY"):
-        sys.exit(2)
+        return 2
 
     try:
         import wandb
     except ImportError:
-        sys.exit(2)
+        return 2
 
     try:
-        api = wandb.Api(timeout=10)
-    except Exception:
-        sys.exit(2)
-
-    # W&B entity — derive from the API's default entity
-    try:
+        api = wandb.Api(timeout=30)
         entity = api.default_entity
     except Exception:
-        sys.exit(2)
-
-    # Build filters: match on display_name and state
-    filters = {
-        "display_name": args.run_name,
-        "state": "finished",
-    }
+        return 2
 
     try:
         runs = api.runs(
-            f"{entity}/{args.project}",
-            filters=filters,
-            per_page=50,
+            f"{entity}/{project}",
+            filters={"state": "finished"},
+            per_page=1000,
         )
 
+        lines = []
         for run in runs:
+            name = run.display_name or run.name or ""
             config = run.config or {}
+            model_a = config.get("model_a") or config.get("model") or ""
+            model_b = config.get("model_b") or ""
+            lines.append(f"{name}\t{model_a}\t{model_b}")
 
-            # Match model_a — check common config key names
-            run_model_a = (
-                config.get("model_a")
-                or config.get("model")
-                or ""
-            )
-            if not _models_match(run_model_a, args.model_a):
+        os.makedirs(os.path.dirname(cache_file) or ".", exist_ok=True)
+        with open(cache_file, "w") as fh:
+            fh.write("\n".join(lines) + "\n")
+
+        print(f"[wandb-cache] Cached {len(lines)} finished runs to {cache_file}")
+        return 0
+
+    except Exception as exc:
+        print(f"[wandb-cache] Failed to fetch runs: {exc}", file=sys.stderr)
+        return 2
+
+
+def check_cached(cache_file: str, run_name: str, model_a: str, model_b: str | None) -> int:
+    """Check the cache file for a matching finished run.
+
+    Returns 0 if found, 1 if not found, 2 if cache doesn't exist.
+    """
+    if not os.path.exists(cache_file):
+        return 2
+
+    model_a_normalized = _normalize(model_a)
+
+    with open(cache_file) as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split("\t")
+            if len(parts) < 2:
                 continue
 
-            # Match model_b if provided
-            if args.model_b is not None:
-                run_model_b = config.get("model_b", "")
-                if not _models_match(run_model_b, args.model_b):
+            cached_name = parts[0]
+            cached_model_a = parts[1] if len(parts) > 1 else ""
+            cached_model_b = parts[2] if len(parts) > 2 else ""
+
+            if cached_name != run_name:
+                continue
+            if not _models_match(cached_model_a, model_a_normalized):
+                continue
+            if model_b is not None:
+                if not _models_match(cached_model_b, _normalize(model_b)):
                     continue
 
-            # Found a matching completed run
-            sys.exit(0)
+            return 0
 
-    except Exception:
-        # API error — fall back to local check
-        sys.exit(2)
-
-    # No matching run found
-    sys.exit(1)
+    return 1
 
 
-def _models_match(run_value: str, expected: str) -> bool:
-    """Check if model identifiers match, handling path normalization."""
-    if not run_value or not expected:
+def _normalize(model_id: str) -> str:
+    return model_id.strip("/").lower()
+
+
+def _models_match(cached: str, expected: str) -> bool:
+    if not cached or not expected:
         return False
-    # Normalize: strip trailing slashes, compare case-insensitively
-    run_clean = run_value.strip("/").lower()
-    expected_clean = expected.strip("/").lower()
+    cached_clean = _normalize(cached)
     # Direct match
-    if run_clean == expected_clean:
+    if cached_clean == expected:
         return True
     # Match after replacing / with _ (local path vs HF id)
-    if run_clean.replace("/", "_") == expected_clean.replace("/", "_"):
+    if cached_clean.replace("/", "_") == expected.replace("/", "_"):
         return True
-    # Match on the last component (basename)
-    if run_clean.split("/")[-1] == expected_clean.split("/")[-1]:
+    # Basename match
+    if cached_clean.split("/")[-1] == expected.split("/")[-1]:
         return True
     return False
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--fetch", action="store_true",
+                        help="Fetch all finished runs from W&B and write cache")
+    parser.add_argument("--check", action="store_true",
+                        help="Check cache for a specific run")
+    parser.add_argument("--cache-file", required=True,
+                        help="Path to the cache file")
+    parser.add_argument("--project", default="cambridge_era")
+    # --check arguments
+    parser.add_argument("--run-name", default=None)
+    parser.add_argument("--model-a", default=None)
+    parser.add_argument("--model-b", default=None)
+    args = parser.parse_args()
+
+    if args.fetch:
+        sys.exit(fetch_finished_runs(args.project, args.cache_file))
+    elif args.check:
+        if not args.run_name or not args.model_a:
+            print("--check requires --run-name and --model-a", file=sys.stderr)
+            sys.exit(2)
+        sys.exit(check_cached(args.cache_file, args.run_name, args.model_a, args.model_b))
+    else:
+        print("Specify --fetch or --check", file=sys.stderr)
+        sys.exit(2)
 
 
 if __name__ == "__main__":
