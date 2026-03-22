@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -uo pipefail
 
 # Always run from the project root (parent of experiment/)
 cd "$(dirname "$0")/.."
@@ -114,6 +114,25 @@ run_multiseed_experiment() {
     --sentinel-file "$sentinel"
 }
 
+# ---- Resilient step runner ----
+# Runs a command; on failure, logs a warning and continues instead of aborting.
+# Usage: run_step "Step N: description" command arg1 arg2 ...
+STEP_FAILURES=0
+run_step() {
+  local step_name="$1"
+  shift
+  if "$@"; then
+    return 0
+  else
+    local rc=$?
+    echo ""
+    echo "  ✗ $step_name FAILED (exit $rc) — continuing to next step"
+    echo ""
+    ((STEP_FAILURES++))
+    return 0  # swallow the error so the pipeline continues
+  fi
+}
+
 echo "=========================================="
 echo "      MODEL DIFFS ANALYSIS PIPELINE"
 echo "=========================================="
@@ -174,7 +193,7 @@ echo "----------------------------------------"
 if step_complete "${OUTROOT}/${COMP}/weight_comparison" "per_matrix.csv"; then
   echo "  ✓ Already complete — skipping"
 else
-  uv run experiment/collect_weight_comparison.py \
+  run_step "Step 1" uv run experiment/collect_weight_comparison.py \
     --model-a "$MODEL_A" \
     --model-b "$MODEL_B" \
     --device "$PARAM_DEVICE" \
@@ -200,7 +219,7 @@ echo "----------------------------------------"
 if step_complete "${OUTROOT}/${COMP}/sv_spectrum" "sv_spectrum.png"; then
   echo "  ✓ Already complete — skipping"
 else
-  uv run experiment/singular_value_spectrum_analysis.py \
+  run_step "Step 1.5" uv run experiment/singular_value_spectrum_analysis.py \
     --model-a "$MODEL_A" \
     --model-b "$MODEL_B" \
     --device "$PARAM_DEVICE" \
@@ -236,7 +255,7 @@ else
   echo ""
   echo "Comparing: $MODEL_A → $MODEL_B"
   echo "----------------------------------------"
-  run_multiseed_experiment "${OUTROOT}/${COMP}/activation_comparison" "activation_comparison.csv" \
+  run_step "Step 3" run_multiseed_experiment "${OUTROOT}/${COMP}/activation_comparison" "activation_comparison.csv" \
     "experiment/collect_activation_comparison.py" \
     --model-a "$MODEL_A" \
     --model-b "$MODEL_B" \
@@ -321,7 +340,7 @@ print(build_outdir(a))
   if step_complete "$NORM_CTRL_OUTDIR" "config.json"; then
     echo "  ✓ Norm-controlled model already trained — skipping"
   else
-    uv run unlearn/unlearn.py \
+    run_step "Step 3b" uv run unlearn/unlearn.py \
       --model "$MODEL_A" \
       --method "$NORM_CTRL_METHOD" \
       --forget-data "$FORGET" \
@@ -351,7 +370,7 @@ echo "Analyzing: $MODEL_A → $MODEL_B"
 if step_complete "${OUTROOT}/${COMP}/mlp_attn_analysis" "mlp_attn_summary.csv"; then
   echo "  ✓ Already complete — skipping"
 else
-  uv run experiment/analyze_mlp_vs_attn.py \
+  run_step "Step 4" uv run experiment/analyze_mlp_vs_attn.py \
     --per-layer-csv "${OUTROOT}/${COMP}/weight_comparison/per_coarse_layer.csv" \
     --per-matrix-csv "${OUTROOT}/${COMP}/weight_comparison/per_matrix.csv" \
     --outdir "${OUTROOT}/${COMP}/mlp_attn_analysis" \
@@ -385,7 +404,7 @@ for LENS in $LENS_MODES; do
   echo ""
   echo "Model A: $MODEL_A"
   echo "----------------------------------------"
-  run_multiseed_experiment "${OUTROOT}/${MODEL_A_DIR}/wmdp_${LENS}_lens" "summary.json" \
+  run_step "Step 5 (${LENS}, Model A)" run_multiseed_experiment "${OUTROOT}/${MODEL_A_DIR}/wmdp_${LENS}_lens" "summary.json" \
     "experiment/layerwise_wmdp_accuracy.py" \
     --model "$MODEL_A" \
     --lens "$LENS" \
@@ -395,7 +414,7 @@ for LENS in $LENS_MODES; do
   echo ""
   echo "Model B: $MODEL_B"
   echo "----------------------------------------"
-  run_multiseed_experiment "${OUTROOT}/${MODEL_B_DIR}/wmdp_${LENS}_lens" "summary.json" \
+  run_step "Step 5 (${LENS}, Model B)" run_multiseed_experiment "${OUTROOT}/${MODEL_B_DIR}/wmdp_${LENS}_lens" "summary.json" \
     "experiment/layerwise_wmdp_accuracy.py" \
     --model "$MODEL_B" \
     --lens "$LENS" \
@@ -414,7 +433,7 @@ echo "Note: This is computationally intensive (SVD on 50 weight matrices)"
 
 echo ""
 echo "Analyzing: $MODEL_A → $MODEL_B"
-run_multiseed_experiment "${OUTROOT}/${COMP}/null_space_analysis" "null_space_visualization.png" \
+run_step "Step 7" run_multiseed_experiment "${OUTROOT}/${COMP}/null_space_analysis" "null_space_visualization.png" \
   "experiment/null_space_analysis.py" \
   --model-a "$MODEL_A" \
   --model-b "$MODEL_B" \
@@ -431,7 +450,7 @@ echo "Analyzing how well forget/retain activations are separated..."
 
 echo ""
 echo "Analyzing: $MODEL_A → $MODEL_B"
-run_multiseed_experiment "${OUTROOT}/${COMP}/activation_separation" "summary.json" \
+run_step "Step 8" run_multiseed_experiment "${OUTROOT}/${COMP}/activation_separation" "summary.json" \
   "experiment/activation_separation_analysis.py" \
   --model-a "$MODEL_A" \
   --model-b "$MODEL_B" \
@@ -451,7 +470,7 @@ echo "Analyzing covariance spectrum changes..."
 
 echo ""
 echo "Analyzing: $MODEL_A → $MODEL_B"
-run_multiseed_experiment "${OUTROOT}/${COMP}/activation_covariance" "summary.json" \
+run_step "Step 9" run_multiseed_experiment "${OUTROOT}/${COMP}/activation_covariance" "summary.json" \
   "experiment/activation_covariance_analysis.py" \
   --model-a "$MODEL_A" \
   --model-b "$MODEL_B" \
@@ -474,7 +493,7 @@ echo "Analyzing: $MODEL_A → $MODEL_B"
 if step_complete "${OUTROOT}/${COMP}/mlp_nullspace_alignment" "summary.json"; then
   echo "  ✓ Already complete — skipping"
 else
-  uv run experiment/mlp_nullspace_alignment.py \
+  run_step "Step 10" uv run experiment/mlp_nullspace_alignment.py \
     --model-a "$MODEL_A" \
     --model-b "$MODEL_B" \
     --device "$PARAM_DEVICE" \
@@ -492,7 +511,7 @@ echo "Analyzing how activations project onto update directions..."
 
 echo ""
 echo "Analyzing: $MODEL_A → $MODEL_B"
-run_multiseed_experiment "${OUTROOT}/${COMP}/row_space_projection" "summary.json" \
+run_step "Step 11" run_multiseed_experiment "${OUTROOT}/${COMP}/row_space_projection" "summary.json" \
   "experiment/row_space_projection_analysis.py" \
   --model-a "$MODEL_A" \
   --model-b "$MODEL_B" \
@@ -512,7 +531,7 @@ echo "Analyzing local smoothness changes..."
 
 echo ""
 echo "Analyzing: $MODEL_A → $MODEL_B"
-run_multiseed_experiment "${OUTROOT}/${COMP}/lipschitzness_analysis" "summary.json" \
+run_step "Step 12" run_multiseed_experiment "${OUTROOT}/${COMP}/lipschitzness_analysis" "summary.json" \
   "experiment/local_lipschitzness_analysis.py" \
   --model-a "$MODEL_A" \
   --model-b "$MODEL_B" \
@@ -557,6 +576,11 @@ echo "  • Multi-seed experiments (${SEEDS}) provide error bars for stochastic 
 echo "  • Results include mean ± std across seeds in CSV/JSON files"
 echo "  • Individual seed results preserved under seed_*/ subdirectories"
 echo ""
+if [[ $STEP_FAILURES -gt 0 ]]; then
+  echo "WARNING: $STEP_FAILURES step(s) failed during this run."
+  echo "  Rerun with --force to retry, or check the logs above for details."
+  echo ""
+fi
 echo "Tip: rerun with --force to regenerate all results."
 echo "Tip: set SEEDS=\"42 123 456 789 999\" for more robust statistics."
 echo ""

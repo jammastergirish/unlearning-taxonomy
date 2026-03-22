@@ -82,7 +82,26 @@ MODEL_B=EleutherAI/deep-ignorance-e2e-strong-filter-adversarial \
 ENABLE_TUNED_LENS=1 ./experiment/pipeline.sh
 ```
 
-Already-completed steps are automatically skipped (pass `--force` to rerun).
+Already-completed steps are automatically skipped (pass `--force` to rerun). Individual step failures are logged but do not abort the pipeline — remaining steps continue and a failure summary is printed at the end.
+
+### Running All Best Models
+
+To run the full pipeline on every model in the [best-unlearned-models](https://huggingface.co/collections/girishgupta/best-unlearned-models) HuggingFace collection:
+
+```bash
+# Run pipeline on all 8 best models, then on their norm-controlled variants
+./experiment/run_pipeline_best_models.sh
+
+# Preview commands without running
+DRY_RUN=1 ./experiment/run_pipeline_best_models.sh
+
+# Rerun completed steps
+./experiment/run_pipeline_best_models.sh --force
+```
+
+This runs in two passes:
+1. **Pass 1** runs the pipeline on each HF model. Step 3b trains a norm-controlled variant of each.
+2. **Pass 2** finds the norm-controlled models produced by Pass 1 (local directories containing `_nrl`) and runs the full pipeline on each. Step 3b is automatically skipped for these to avoid infinite recursion.
 
 ### Statistical Robustness & Error Bars
 
