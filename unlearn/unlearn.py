@@ -986,11 +986,22 @@ def norm_reg_loss(
     Uses forward hooks to compute each layer's mean per-token L2 norm
     during the forward pass, so full hidden-state tensors are never kept
     in memory simultaneously.
+
+    Gradient checkpointing is temporarily disabled for this inner forward
+    pass to avoid a tensor-count mismatch with the outer training forward
+    pass (torch.utils.checkpoint saves/restores a fixed number of tensors,
+    and extra hooks change that count).
     """
     layers = _resolve_layers(model)
     mask = batch["attention_mask"]                         # int tensor, no .float() needed
     token_count = mask.sum().clamp(min=1.0)
     device = next(model.parameters()).device
+
+    # Temporarily disable gradient checkpointing so this auxiliary forward
+    # pass does not interfere with the outer checkpointed forward/backward.
+    checkpointing_was_enabled = getattr(model, "is_gradient_checkpointing", False)
+    if checkpointing_was_enabled and hasattr(model, "gradient_checkpointing_disable"):
+        model.gradient_checkpointing_disable()
 
     # Collect scalar mean-L2 norms per layer via hooks.
     # Each hook computes the norm and stores a differentiable scalar.
@@ -1016,6 +1027,8 @@ def norm_reg_loss(
     finally:
         for h in handles:
             h.remove()
+        if checkpointing_was_enabled and hasattr(model, "gradient_checkpointing_enable"):
+            model.gradient_checkpointing_enable()
 
     loss = torch.tensor(0.0, device=device)
     for idx, mean_l2 in enumerate(layer_norms):
@@ -1545,45 +1558,7 @@ def run_evaluation_benchmarks(outdir, device, dtype, no_eval=False):
 #   unlearned_models/EleutherAI_deep-ignorance-unfiltered__cb_lat__ep2_lr5e-06_bs4_a100.0_sc20.0_le0.1_ls5_ly5-6-7
 # ===================================================================
 
-# Which parameters are relevant for each method
-METHOD_PARAMS: dict[str, list[str]] = {
-    "ga_simple":    ["epochs", "lr", "batch_size", "max_length", "max_lines"],
-    "ga":           ["epochs", "lr", "batch_size", "retain_weight", "max_length", "max_lines"],
-    "grad_diff":    ["epochs", "lr", "batch_size", "forget_weight", "max_length", "max_lines"],
-    "dpo":          ["epochs", "lr", "batch_size", "beta", "max_length", "max_lines"],
-    "npo":          ["epochs", "lr", "batch_size", "beta", "retain_weight", "max_length", "max_lines"],
-    "simnpo":       ["epochs", "lr", "batch_size", "beta", "retain_weight", "max_length", "max_lines"],
-    "rmu":          ["epochs", "lr", "batch_size", "alpha", "steering_coeff", "layer_id", "max_length", "max_lines"],
-    "cb":           ["epochs", "lr", "batch_size", "alpha", "steering_coeff", "layer_id", "max_length", "max_lines"],
-    "lat":          ["epochs", "lr", "batch_size", "lat_eps", "lat_steps", "retain_weight", "layer_id", "max_length", "max_lines"],
-    "cb_lat":       ["epochs", "lr", "batch_size", "alpha", "steering_coeff", "lat_eps", "lat_steps", "layer_id", "max_length", "max_lines"],
-    "tar":          ["tar_alpha", "tar_lr", "tar_epochs", "max_length", "max_lines"],
-    "wt_dist":      ["epochs", "lr", "batch_size", "wt_noise_std", "max_length", "max_lines"],
-    "wt_dist_reg":  ["epochs", "lr", "batch_size", "wt_reg_lambda", "max_length", "max_lines"],
-}
-
-# Short abbreviations for folder name suffixes
-PARAM_ABBREV: dict[str, str] = {
-    "epochs": "ep",
-    "lr": "lr",
-    "batch_size": "bs",
-    "max_length": "mle",
-    "max_lines": "mli",
-    "retain_weight": "rw",
-    "forget_weight": "fw",
-    "beta": "b",
-    "alpha": "a",
-    "steering_coeff": "sc",
-    "layer_id": "ly",
-    "lat_eps": "le",
-    "lat_steps": "ls",
-    "tar_alpha": "ta",
-    "tar_lr": "tlr",
-    "tar_epochs": "tep",
-    "wt_noise_std": "wn",
-    "wt_reg_lambda": "wr",
-    "norm_reg_lambda": "nrl",
-}
+from utils import METHOD_PARAMS, PARAM_ABBREV
 
 
 def save_training_config(args, outdir):
@@ -1618,37 +1593,7 @@ def save_training_config(args, outdir):
     print(f"[unlearn] Training config saved to {outdir}/training_config.yaml")
 
 
-def build_outdir(args) -> str:
-    """Build the output directory path from the method and its relevant parameters."""
-    method = args.method
-
-    # Build parameter suffix from all relevant params for this method
-    parts = []
-    for param in METHOD_PARAMS[method]:
-        abbrev = PARAM_ABBREV[param]
-        value = getattr(args, param)
-        # Use effective batch size for batch_size parameter
-        if param == "batch_size" and hasattr(args, "grad_accum_steps"):
-            value = value * args.grad_accum_steps
-        # layer_id is a string like "5,6,7" — use dashes for folder safety
-        elif param == "layer_id":
-            value = str(value).replace(",", "-")
-        parts.append(f"{abbrev}{value}")
-
-    suffix = "_".join(parts)
-
-    # Append norm-reg suffix when enabled (cross-cutting, not method-specific)
-    nrl = getattr(args, "norm_reg_lambda", 0.0)
-    if nrl > 0:
-        suffix = f"{suffix}_nrl{nrl}"
-
-    # Append optimizer suffix when non-default, so the name is unique and
-    # visible in local folders, W&B run names, and HuggingFace repo names.
-    optimizer = getattr(args, "optimizer", "adamw")
-    if optimizer != "adamw":
-        suffix = f"{suffix}_opt{optimizer}"
-
-    return model_outdir(args.model, root="unlearned_models", suffix=f"{method}__{suffix}")
+from utils import build_outdir
 
 
 

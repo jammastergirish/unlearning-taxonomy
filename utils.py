@@ -71,6 +71,77 @@ def comparison_outdir(model_a: str, model_b: str, root: str = "outputs", suffix:
     return os.path.join(*parts)
 
 
+# --- Unlearning output directory logic ---
+# Moved here from unlearn/unlearn.py so that shell scripts can compute
+# output paths without importing unlearn.py (which pulls in tqdm,
+# transformers, etc.).
+
+METHOD_PARAMS: dict[str, list[str]] = {
+    "ga_simple":    ["epochs", "lr", "batch_size", "max_length", "max_lines"],
+    "ga":           ["epochs", "lr", "batch_size", "retain_weight", "max_length", "max_lines"],
+    "grad_diff":    ["epochs", "lr", "batch_size", "forget_weight", "max_length", "max_lines"],
+    "dpo":          ["epochs", "lr", "batch_size", "beta", "max_length", "max_lines"],
+    "npo":          ["epochs", "lr", "batch_size", "beta", "retain_weight", "max_length", "max_lines"],
+    "simnpo":       ["epochs", "lr", "batch_size", "beta", "retain_weight", "max_length", "max_lines"],
+    "rmu":          ["epochs", "lr", "batch_size", "alpha", "steering_coeff", "layer_id", "max_length", "max_lines"],
+    "cb":           ["epochs", "lr", "batch_size", "alpha", "steering_coeff", "layer_id", "max_length", "max_lines"],
+    "lat":          ["epochs", "lr", "batch_size", "lat_eps", "lat_steps", "retain_weight", "layer_id", "max_length", "max_lines"],
+    "cb_lat":       ["epochs", "lr", "batch_size", "alpha", "steering_coeff", "lat_eps", "lat_steps", "layer_id", "max_length", "max_lines"],
+    "tar":          ["tar_alpha", "tar_lr", "tar_epochs", "max_length", "max_lines"],
+    "wt_dist":      ["epochs", "lr", "batch_size", "wt_noise_std", "max_length", "max_lines"],
+    "wt_dist_reg":  ["epochs", "lr", "batch_size", "wt_reg_lambda", "max_length", "max_lines"],
+}
+
+PARAM_ABBREV: dict[str, str] = {
+    "epochs": "ep",
+    "lr": "lr",
+    "batch_size": "bs",
+    "max_length": "mle",
+    "max_lines": "mli",
+    "retain_weight": "rw",
+    "forget_weight": "fw",
+    "beta": "b",
+    "alpha": "a",
+    "steering_coeff": "sc",
+    "layer_id": "ly",
+    "lat_eps": "le",
+    "lat_steps": "ls",
+    "tar_alpha": "ta",
+    "tar_lr": "tlr",
+    "tar_epochs": "tep",
+    "wt_noise_std": "wn",
+    "wt_reg_lambda": "wr",
+    "norm_reg_lambda": "nrl",
+}
+
+
+def build_outdir(args) -> str:
+    """Build the unlearned-model output directory from method and its relevant parameters."""
+    method = args.method
+
+    parts = []
+    for param in METHOD_PARAMS[method]:
+        abbrev = PARAM_ABBREV[param]
+        value = getattr(args, param)
+        if param == "batch_size" and hasattr(args, "grad_accum_steps"):
+            value = value * args.grad_accum_steps
+        elif param == "layer_id":
+            value = str(value).replace(",", "-")
+        parts.append(f"{abbrev}{value}")
+
+    suffix = "_".join(parts)
+
+    nrl = getattr(args, "norm_reg_lambda", 0.0)
+    if nrl > 0:
+        suffix = f"{suffix}_nrl{nrl}"
+
+    optimizer = getattr(args, "optimizer", "adamw")
+    if optimizer != "adamw":
+        suffix = f"{suffix}_opt{optimizer}"
+
+    return model_outdir(args.model, root="unlearned_models", suffix=f"{method}__{suffix}")
+
+
 def load_dotenv(path: str = None):
     """Load .env file into environment. No external dependencies needed."""
     if path is None:

@@ -320,8 +320,7 @@ if [[ "$IS_NORM_CONTROLLED" != "1" && -n "$NORM_CTRL_METHOD" && -f "$FORGET" && 
   # for the comparison step. build_outdir appends _nrl<lambda> when non-zero.
   NORM_CTRL_OUTDIR=$(python3 -c "
 import sys, types; sys.path.insert(0,'.')
-from utils import model_outdir
-# Minimal args object matching build_outdir's expectations
+from utils import build_outdir
 a = types.SimpleNamespace(
     model='$MODEL_A', method='$NORM_CTRL_METHOD',
     epochs=1, lr=1e-5, batch_size=4, max_length=512, max_lines=1024,
@@ -331,8 +330,6 @@ a = types.SimpleNamespace(
     wt_noise_std=0.02, wt_reg_lambda=0.1,
     norm_reg_lambda=$NORM_CTRL_LAMBDA, optimizer='adamw', grad_accum_steps=1,
 )
-sys.path.insert(0,'unlearn')
-from unlearn import build_outdir
 print(build_outdir(a))
 ")
   NORM_CTRL_COMP="${MODEL_A_DIR}__to__$(basename "$NORM_CTRL_OUTDIR")"
