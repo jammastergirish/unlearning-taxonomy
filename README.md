@@ -82,7 +82,7 @@ MODEL_B=EleutherAI/deep-ignorance-e2e-strong-filter-adversarial \
 ENABLE_TUNED_LENS=1 ./experiment/pipeline.sh
 ```
 
-Already-completed steps are automatically skipped (pass `--force` to rerun). Step completion is checked against **W&B** (authoritative) — if a finished run with matching name and model config exists in the `cambridge_era` project, the step is skipped even if local output files are missing. Local sentinel files are only used as a fallback when W&B is unavailable (no API key or network). For multi-seed experiments, each seed is checked individually, so only missing seeds are rerun before re-aggregating. Individual step failures are logged but do not abort the pipeline — remaining steps continue and a failure summary is printed at the end.
+Already-completed steps are automatically skipped (pass `--force` to rerun). At startup, the pipeline fetches all finished runs from **W&B** into a local cache, then checks each step against it — no per-step network calls. W&B is authoritative: if a finished run with matching name and model config exists in the `cambridge_era` project, the step is skipped even if local output files are missing. Local sentinel files are only used as a fallback when W&B is unavailable (no API key or network). For multi-seed experiments, each seed is checked individually, so only missing seeds are rerun before re-aggregating. Individual step failures are logged but do not abort the pipeline — remaining steps continue and a failure summary is printed at the end.
 
 ### Running All Best Models
 
@@ -495,7 +495,7 @@ outputs/
     wmdp_tuned_lens/       wmdp_lens_results.csv, summary.json + plot
 ```
 
-> **Tip:** The pipeline checks **W&B** for completed runs before deciding to skip or rerun a step. Local sentinel files are only a fallback when W&B is unavailable. Use `./experiment/pipeline.sh --force` to ignore all completion checks and regenerate everything.
+> **Tip:** At startup the pipeline fetches all finished runs from W&B into a local cache, then checks each step instantly against it. Local sentinel files are only a fallback when W&B is unavailable. Use `./experiment/pipeline.sh --force` to ignore all completion checks and regenerate everything.
 
 ---
 
