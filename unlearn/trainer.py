@@ -35,6 +35,91 @@ from transformers import Trainer
 
 
 # ============================================================
+# Muon RMS-matched optimizer wrapper
+# ============================================================
+
+class _RMSMatchedMuonWithAuxAdam(torch.optim.Optimizer):
+    """SingleDeviceMuonWithAuxAdam with adjust_lr_fn='match_rms_adamw'.
+
+    Muon's Newton-Schulz orthogonalised update has per-element RMS ~1/sqrt(n_cols),
+    while AdamW's element-wise normalised update has RMS ~1.  This wrapper scales
+    each Muon parameter's effective step by sqrt(n_cols) so the user-facing LR has
+    the same meaning for both optimizer groups — no separate Muon LR sweep needed.
+
+    We reimplement step() rather than subclassing the upstream class because it
+    enforces strict assert checks on param-group keys that prevent adding metadata.
+    """
+
+    def __init__(self, param_groups):
+        from muon import muon_update, adam_update          # noqa: F811
+        self._muon_update = muon_update
+        self._adam_update = adam_update
+
+        # Compute per-parameter RMS scale factors before registering groups.
+        self._rms_scales: dict[int, float] = {}
+        for group in param_groups:
+            assert "use_muon" in group
+            if group["use_muon"]:
+                for p in group["params"]:
+                    self._rms_scales[id(p)] = p.shape[-1] ** 0.5
+                group.setdefault("lr", 0.02)
+                group.setdefault("momentum", 0.95)
+                group.setdefault("weight_decay", 0)
+            else:
+                group.setdefault("lr", 3e-4)
+                group.setdefault("betas", (0.9, 0.95))
+                group.setdefault("eps", 1e-10)
+                group.setdefault("weight_decay", 0)
+        super().__init__(param_groups, dict())
+
+    @torch.no_grad()
+    def step(self, closure=None):
+        loss = None
+        if closure is not None:
+            with torch.enable_grad():
+                loss = closure()
+
+        for group in self.param_groups:
+            if group["use_muon"]:
+                for p in group["params"]:
+                    if p.grad is None:
+                        p.grad = torch.zeros_like(p)
+                    state = self.state[p]
+                    if len(state) == 0:
+                        state["momentum_buffer"] = torch.zeros_like(p)
+                    update = self._muon_update(
+                        p.grad, state["momentum_buffer"],
+                        beta=group["momentum"],
+                    )
+                    # match_rms_adamw: Muon's NS-orthogonalised update has
+                    # per-element RMS ~ 1/sqrt(n_cols), vs AdamW's ~ 1.
+                    # Scaling by sqrt(n_cols) equalises the two so one LR
+                    # works for both groups without a separate Muon sweep.
+                    scale = self._rms_scales.get(id(p), 1.0)
+                    p.mul_(1 - group["lr"] * group["weight_decay"])
+                    p.add_(update.reshape(p.shape),
+                           alpha=-group["lr"] * scale)
+            else:
+                for p in group["params"]:
+                    if p.grad is None:
+                        p.grad = torch.zeros_like(p)
+                    state = self.state[p]
+                    if len(state) == 0:
+                        state["exp_avg"] = torch.zeros_like(p)
+                        state["exp_avg_sq"] = torch.zeros_like(p)
+                        state["step"] = 0
+                    state["step"] += 1
+                    update = self._adam_update(
+                        p.grad, state["exp_avg"], state["exp_avg_sq"],
+                        state["step"], group["betas"], group["eps"],
+                    )
+                    p.mul_(1 - group["lr"] * group["weight_decay"])
+                    p.add_(update, alpha=-group["lr"])
+
+        return loss
+
+
+# ============================================================
 # Dataset / Collator
 # ============================================================
 
@@ -337,6 +422,11 @@ class UnlearningTrainer(Trainer):
         MuonWithAuxAdam handles this with a single unified optimizer object
         (one param group with use_muon=True, one with use_muon=False).
 
+        The Muon group uses match_rms_adamw LR adjustment: each parameter's
+        effective step is scaled by sqrt(n_cols) so that the per-element RMS
+        of the Muon update matches AdamW's.  This means a single --learning-rate
+        value works for both groups without separate tuning.
+
         For 'adamw' (the default) we fall through to the HF Trainer's own
         create_optimizer(), which handles weight-decay groups, etc.
         """
@@ -344,10 +434,8 @@ class UnlearningTrainer(Trainer):
         if opt_name != "muon":
             return super().create_optimizer()
 
-        from muon import SingleDeviceMuonWithAuxAdam as MuonWithAuxAdam
-
         # Non-hidden parameters: embeddings, layer norms, biases, lm_head.
-        # These go to the auxiliary AdamW inside MuonWithAuxAdam.
+        # These go to the auxiliary AdamW inside _RMSMatchedMuonWithAuxAdam.
         _NON_HIDDEN = ("embed", "norm", "lm_head", "bias")
 
         model = self.model
@@ -375,10 +463,16 @@ class UnlearningTrainer(Trainer):
         ]
 
         print(
-            f"[UnlearningTrainer] Using MuonWithAuxAdam: "
+            f"[UnlearningTrainer] Using MuonWithAuxAdam (match_rms_adamw): "
             f"{len(hidden_weights)} hidden-weight tensors → Muon, "
             f"{len(other_params)} other tensors → AdamW"
         )
 
-        self.optimizer = MuonWithAuxAdam(param_groups)
+        self.optimizer = _RMSMatchedMuonWithAuxAdam(param_groups)
+
+        # Log the per-parameter RMS scale factors for transparency
+        scales = self.optimizer._rms_scales
+        unique_scales = sorted(set(scales.values()))
+        print(f"[UnlearningTrainer] match_rms_adamw scale factors: {unique_scales}")
+
         return self.optimizer
