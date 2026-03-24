@@ -60,6 +60,16 @@ if [[ "$IS_NORM_CONTROLLED" == "1" ]]; then
   PIPELINE_TAG="norm_controlled_${PIPELINE_TAG}"
   export WANDB_TAGS="${WANDB_TAGS:+${WANDB_TAGS},}norm_controlled"
 fi
+# Infer the unlearning method from MODEL_B and add as a W&B tag
+INFERRED_METHOD=$(python3 -c "
+import sys; sys.path.insert(0,'.')
+from utils import infer_method_from_model_name
+m = infer_method_from_model_name('$MODEL_B')
+print(m or '')
+")
+if [[ -n "$INFERRED_METHOD" ]]; then
+  export WANDB_TAGS="${WANDB_TAGS:+${WANDB_TAGS},}method:${INFERRED_METHOD}"
+fi
 export WANDB_RUN_GROUP="${WANDB_RUN_GROUP:-$PIPELINE_TAG}"
 
 # Device and dtype settings
