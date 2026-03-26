@@ -287,7 +287,7 @@ def plot_covariance_analysis(
 
     plt.suptitle(title or "Activation Covariance Analysis")
     plt.tight_layout()
-    plt.savefig(os.path.join(outdir, "covariance_analysis.png"), dpi=150)
+    plt.savefig(os.path.join(outdir, "covariance_analysis.png"), dpi=300)
     plt.close()
 
 

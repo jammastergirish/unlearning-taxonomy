@@ -288,7 +288,7 @@ def plot_separation_analysis(
 
     plt.suptitle(title or "Activation Separation Analysis")
     plt.tight_layout()
-    plt.savefig(os.path.join(outdir, "activation_separation_analysis.png"), dpi=150)
+    plt.savefig(os.path.join(outdir, "activation_separation_analysis.png"), dpi=300)
     plt.close()
 
 

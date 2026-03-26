@@ -195,7 +195,7 @@ def _plot_overlay(
 
     fig.suptitle(f"{title}\n{name}", fontsize=11)
     fig.tight_layout()
-    fig.savefig(outpath, dpi=120)
+    fig.savefig(outpath, dpi=300)
     plt.close(fig)
 
 
@@ -226,7 +226,7 @@ def _plot_dw_all_layers(
     ax.grid(alpha=0.3)
     fig.suptitle(title, fontsize=10)
     fig.tight_layout()
-    fig.savefig(outpath, dpi=120)
+    fig.savefig(outpath, dpi=300)
     plt.close(fig)
 
 
@@ -270,7 +270,7 @@ def _plot_elbow_summary(
 
     fig.suptitle(f"{title}\nElbow indices (effective rank at drop-off)", fontsize=11)
     fig.tight_layout()
-    fig.savefig(outpath, dpi=120)
+    fig.savefig(outpath, dpi=300)
     plt.close(fig)
 
 
@@ -324,13 +324,28 @@ def _plot_elbow_linechart(
 
     fig.suptitle(f"{title}\nElbow index by layer (effective rank at spectrum drop-off)", fontsize=11)
     fig.tight_layout()
-    fig.savefig(outpath, dpi=130)
+    fig.savefig(outpath, dpi=300)
     plt.close(fig)
 
 
 # ---------------------------------------------------------------------------
 # W&B native data logging
 # ---------------------------------------------------------------------------
+
+_WANDB_MAX_POINTS = 10_000
+
+
+def _downsample_spectrum(xs: np.ndarray, ys: np.ndarray, max_pts: int) -> Tuple[list, list]:
+    """Evenly downsample (xs, ys) to at most max_pts points.
+
+    Always keeps the first and last point so the axis range is preserved.
+    """
+    n = len(xs)
+    if n <= max_pts:
+        return xs.tolist(), ys.tolist()
+    indices = np.round(np.linspace(0, n - 1, max_pts)).astype(int)
+    return xs[indices].tolist(), ys[indices].tolist()
+
 
 def _log_wandb_spectrum(
     key: str,
@@ -343,18 +358,24 @@ def _log_wandb_spectrum(
     """Upload one spectrum triple as a W&B line_series chart (interactive).
 
     W&B's line_series takes parallel lists of xs and ys per series. We
-    truncate all three spectra to a common length so the x-axis is shared.
+    truncate all three spectra to a common length so the x-axis is shared,
+    then downsample if the total point count would exceed _WANDB_MAX_POINTS.
     """
     try:
         import wandb
         if wandb.run is None:
             return
         n = min(len(s_a), len(s_b), len(s_dw))
-        xs = list(range(n))
+        n_series = 3
+        max_per_series = _WANDB_MAX_POINTS // n_series
+        all_xs = np.arange(n)
+        xs_a, ys_a = _downsample_spectrum(all_xs, s_a[:n], max_per_series)
+        xs_b, ys_b = _downsample_spectrum(all_xs, s_b[:n], max_per_series)
+        xs_dw, ys_dw = _downsample_spectrum(all_xs, s_dw[:n], max_per_series)
         wandb.log({
             key: wandb.plot.line_series(
-                xs=xs,
-                ys=[s_a[:n].tolist(), s_b[:n].tolist(), s_dw[:n].tolist()],
+                xs=[xs_a, xs_b, xs_dw],
+                ys=[ys_a, ys_b, ys_dw],
                 keys=[label_a, label_b, "ΔW"],
                 title=key,
                 xname="Singular value index",

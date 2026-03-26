@@ -280,7 +280,7 @@ def plot_row_space_projections(
 
     plt.suptitle(title or f"Row Space Projection Analysis\n{model_a.split('/')[-1]} → {model_b.split('/')[-1]}")
     plt.tight_layout()
-    plt.savefig(os.path.join(outdir, "row_space_projections.png"), dpi=150)
+    plt.savefig(os.path.join(outdir, "row_space_projections.png"), dpi=300)
     plt.close()
 
 

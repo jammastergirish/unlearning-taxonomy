@@ -237,7 +237,7 @@ def plot_nullspace_alignment(
 
     plt.suptitle(title or "MLP Nullspace Alignment Analysis")
     plt.tight_layout()
-    plt.savefig(os.path.join(outdir, "mlp_nullspace_alignment.png"), dpi=150)
+    plt.savefig(os.path.join(outdir, "mlp_nullspace_alignment.png"), dpi=300)
     plt.close()
 
 

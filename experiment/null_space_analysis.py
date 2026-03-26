@@ -263,7 +263,7 @@ def plot_null_space_results(
 
     plt.suptitle(title or "Null Space and Subspace Analysis")
     plt.tight_layout()
-    plt.savefig(os.path.join(outdir, "null_space_visualization.png"))
+    plt.savefig(os.path.join(outdir, "null_space_visualization.png"), dpi=300)
     plt.close()
 
 

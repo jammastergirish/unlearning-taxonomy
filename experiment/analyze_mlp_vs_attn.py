@@ -141,7 +141,7 @@ def plot_magnitude_comparison(
 
     plt.suptitle(title or "MLP vs Attention Weight Changes")
     plt.tight_layout()
-    plt.savefig(os.path.join(outdir, "mlp_vs_attn_magnitude.png"))
+    plt.savefig(os.path.join(outdir, "mlp_vs_attn_magnitude.png"), dpi=300)
     plt.close()
 
 
@@ -222,7 +222,7 @@ def plot_detailed_analysis(
 
     plt.suptitle(title or "Detailed MLP vs Attention Analysis")
     plt.tight_layout()
-    plt.savefig(os.path.join(outdir, "mlp_vs_attn_detailed.png"))
+    plt.savefig(os.path.join(outdir, "mlp_vs_attn_detailed.png"), dpi=300)
     plt.close()
 
 

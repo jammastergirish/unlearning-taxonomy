@@ -1026,6 +1026,143 @@ def wt_dist_reg_loss(
     return retain_nll - reg_lambda * l2_dist
 
 
+# ---- Activation Norm Regularisation --------------------------------------
+# An optional add-on loss that can be combined with any method.  It penalises
+# deviations of per-layer activation L2 norms from reference (base model)
+# targets, anchoring the model's norm profile during unlearning.
+#
+#   L_norm_reg = Σ_l (mean_token ‖h_l‖₂  −  target_l)²
+
+def _resolve_layers(model):
+    """Return the nn.ModuleList of transformer layers for common HF architectures."""
+    for attr in ("model.layers", "gpt_neox.layers", "transformer.h"):
+        obj = model
+        try:
+            for part in attr.split("."):
+                obj = getattr(obj, part)
+            return obj
+        except AttributeError:
+            continue
+    raise RuntimeError("norm_reg: could not locate transformer layers in model")
+
+
+def norm_reg_loss(
+    model,
+    batch: dict,
+    target_norms: list[float],
+) -> torch.Tensor:
+    """Compute activation-norm regularisation on a single batch.
+
+    Uses forward hooks to compute each layer's mean per-token L2 norm
+    during the forward pass, so full hidden-state tensors are never kept
+    in memory simultaneously.
+
+    Gradient checkpointing is temporarily disabled for this inner forward
+    pass to avoid a tensor-count mismatch with the outer training forward
+    pass (torch.utils.checkpoint saves/restores a fixed number of tensors,
+    and extra hooks change that count).
+    """
+    layers = _resolve_layers(model)
+    mask = batch["attention_mask"]                         # int tensor, no .float() needed
+    token_count = mask.sum().clamp(min=1.0)
+    device = next(model.parameters()).device
+
+    # Temporarily disable gradient checkpointing so this auxiliary forward
+    # pass does not interfere with the outer checkpointed forward/backward.
+    checkpointing_was_enabled = getattr(model, "is_gradient_checkpointing", False)
+    if checkpointing_was_enabled and hasattr(model, "gradient_checkpointing_disable"):
+        model.gradient_checkpointing_disable()
+
+    # Collect scalar mean-L2 norms per layer via hooks.
+    # Each hook computes the norm and stores a differentiable scalar.
+    layer_norms: list[torch.Tensor] = []
+    handles: list[torch.utils.hooks.RemovableHook] = []
+
+    def make_hook(storage_list):
+        def hook_fn(module, input, output):
+            hidden = output[0] if isinstance(output, tuple) else output
+            l2 = torch.linalg.vector_norm(hidden.float(), ord=2, dim=-1)  # [B, T]
+            mean_l2 = (l2 * mask.to(l2.device)).sum() / token_count.to(l2.device)
+            storage_list.append(mean_l2)
+        return hook_fn
+
+    for layer in layers:
+        handles.append(layer.register_forward_hook(make_hook(layer_norms)))
+
+    try:
+        model(
+            input_ids=batch["input_ids"],
+            attention_mask=batch["attention_mask"],
+        )
+    finally:
+        for h in handles:
+            h.remove()
+        if checkpointing_was_enabled and hasattr(model, "gradient_checkpointing_enable"):
+            model.gradient_checkpointing_enable()
+
+    loss = torch.tensor(0.0, device=device)
+    for idx, mean_l2 in enumerate(layer_norms):
+        if idx >= len(target_norms):
+            break
+        loss = loss + (mean_l2 - target_norms[idx]) ** 2
+
+    return loss
+
+
+@torch.no_grad()
+def compute_reference_norms(
+    model,
+    batches: list[dict],
+    device: str,
+    n_batches: int | None = None,
+) -> list[float]:
+    """Compute mean per-layer L2 activation norms from the model.
+
+    Uses forward hooks so that full hidden-state tensors are never kept
+    in memory across layers.  Only scalar sums are accumulated.
+    """
+    model.eval()
+    layers = _resolve_layers(model)
+    n_layers = len(layers)
+    sum_l2 = [0.0] * n_layers
+    total_tokens = 0.0
+
+    limit = n_batches if n_batches else len(batches)
+    for batch in batches[:limit]:
+        batch_dev = {k: v.to(device) for k, v in batch.items()}
+        mask = batch_dev["attention_mask"]
+        total_tokens += float(mask.sum().item())
+
+        # Per-batch accumulator populated by hooks
+        batch_norms: list[float] = []
+        handles: list[torch.utils.hooks.RemovableHook] = []
+
+        def make_hook(storage_list, layer_mask):
+            def hook_fn(module, input, output):
+                hidden = output[0] if isinstance(output, tuple) else output
+                l2 = torch.linalg.vector_norm(hidden.float(), ord=2, dim=-1)
+                storage_list.append(float((l2 * layer_mask.to(l2.device)).sum().item()))
+            return hook_fn
+
+        for layer in layers:
+            handles.append(layer.register_forward_hook(make_hook(batch_norms, mask)))
+
+        try:
+            model(
+                input_ids=batch_dev["input_ids"],
+                attention_mask=batch_dev["attention_mask"],
+            )
+        finally:
+            for h in handles:
+                h.remove()
+
+        for i, val in enumerate(batch_norms):
+            sum_l2[i] += val
+
+    model.train()
+    return [s / total_tokens if total_tokens else 0.0 for s in sum_l2]
+
+
 # ---- Task Arithmetic Removal (TAR) --------------------------------------
 # TAR uses task arithmetic: θ_unlearned = θ_base - α(θ_forget_ft - θ_base)
 # where θ_forget_ft is obtained by fine-tuning the base model on forget data.
@@ -1299,20 +1436,49 @@ def _create_model_card(args, repo_id, run_name=None):
     if method in ("wt_dist_reg",):
         hyperparams["Regularizer lambda"] = args.wt_reg_lambda
 
-    # Read eval results if available
-    eval_summary_path = os.path.join(
-        model_outdir(args.outdir, suffix="evals"), "summary.json"
-    )
+    # Read eval results from W&B (primary) with local summary.json as fallback.
+    # W&B keys come from analyze_runs.py: eval_bench/mmlu/acc and
+    # eval_bench/wmdp_bio_robust/acc (= WMDP Bio Robust).
     eval_metrics = {}
-    if os.path.exists(eval_summary_path):
-        with open(eval_summary_path) as f:
-            eval_data = json.load(f)
-        eval_results = eval_data.get("results", {})
-        for task, metrics in eval_results.items():
-            for metric_key, value in metrics.items():
-                if metric_key.endswith(",none") and not metric_key.startswith("alias"):
-                    clean = metric_key.replace(",none", "")
-                    eval_metrics[f"{task}/{clean}"] = value
+
+    # --- W&B lookup ---
+    _wandb_mmlu = None
+    _wandb_wmdp = None
+    if run_name:
+        try:
+            import wandb as _wandb_mod
+            _api = _wandb_mod.Api()
+            _project = os.environ.get("WANDB_PROJECT", "cambridge_era")
+            _runs = _api.runs(_project, filters={"display_name": run_name})
+            for _r in _runs:
+                if _r.state != "finished":
+                    continue
+                _s = _r.summary
+                _wandb_mmlu = _s.get("eval_bench/mmlu/acc")
+                _wandb_wmdp = _s.get("eval_bench/wmdp_bio_robust/acc")
+                break  # first matching finished run is enough
+        except Exception:
+            pass  # W&B unavailable — fall through to local file
+
+    if _wandb_mmlu is not None:
+        eval_metrics["MMLU"] = _wandb_mmlu
+    if _wandb_wmdp is not None:
+        eval_metrics["WMDP Bio (Robust)"] = _wandb_wmdp
+
+    # --- Local fallback (summary.json) ---
+    if not eval_metrics:
+        eval_summary_path = os.path.join(
+            model_outdir(args.outdir, suffix="evals"), "summary.json"
+        )
+        if os.path.exists(eval_summary_path):
+            with open(eval_summary_path) as f:
+                eval_data = json.load(f)
+            eval_results = eval_data.get("results", {})
+            for task, metrics in eval_results.items():
+                for metric_key, value in metrics.items():
+                    if metric_key.endswith(",none") and not metric_key.startswith("alias"):
+                        clean = metric_key.replace(",none", "")
+                        eval_metrics[f"{task}/{clean}"] = value
 
     # Build the model card
     method_name = method_names.get(method, method)
@@ -1357,17 +1523,21 @@ def _create_model_card(args, repo_id, run_name=None):
             "",
             "## Evaluation Results",
             "",
-            "| Benchmark | Metric | Value |",
-            "| --- | --- | --- |",
+            "| Benchmark | Value |",
+            "| --- | --- |",
         ]
         for metric_path, value in sorted(eval_metrics.items()):
             parts = metric_path.split("/", 1)
-            benchmark = parts[0]
-            metric = parts[1] if len(parts) > 1 else "score"
-            if isinstance(value, float):
-                lines.append(f"| {benchmark} | {metric} | {value:.4f} |")
+            if len(parts) == 1:
+                # W&B-sourced flat key (e.g. "MMLU", "WMDP Bio (Robust)")
+                label = parts[0]
             else:
-                lines.append(f"| {benchmark} | {metric} | {value} |")
+                # Local-file task/metric key
+                label = f"{parts[0]} / {parts[1]}"
+            if isinstance(value, float):
+                lines.append(f"| {label} | {value:.4f} |")
+            else:
+                lines.append(f"| {label} | {value} |")
 
     lines.append("")
 
@@ -1458,45 +1628,7 @@ def run_evaluation_benchmarks(outdir, device, dtype, no_eval=False):
 #   unlearned_models/EleutherAI_deep-ignorance-unfiltered__cb_lat__ep2_lr5e-06_bs4_a100.0_sc20.0_le0.1_ls5_ly5-6-7
 # ===================================================================
 
-# Which parameters are relevant for each method
-METHOD_PARAMS: dict[str, list[str]] = {
-    "ga_simple":    ["epochs", "lr", "batch_size", "max_length", "max_lines"],
-    "ga":           ["epochs", "lr", "batch_size", "retain_weight", "max_length", "max_lines"],
-    "grad_diff":    ["epochs", "lr", "batch_size", "forget_weight", "max_length", "max_lines"],
-    "dpo":          ["epochs", "lr", "batch_size", "beta", "max_length", "max_lines"],
-    "npo":          ["epochs", "lr", "batch_size", "beta", "retain_weight", "max_length", "max_lines"],
-    "simnpo":       ["epochs", "lr", "batch_size", "beta", "retain_weight", "max_length", "max_lines"],
-    "rmu":          ["epochs", "lr", "batch_size", "alpha", "steering_coeff", "layer_id", "max_length", "max_lines"],
-    "cb":           ["epochs", "lr", "batch_size", "alpha", "steering_coeff", "layer_id", "max_length", "max_lines"],
-    "lat":          ["epochs", "lr", "batch_size", "lat_eps", "lat_steps", "retain_weight", "layer_id", "max_length", "max_lines"],
-    "cb_lat":       ["epochs", "lr", "batch_size", "alpha", "steering_coeff", "lat_eps", "lat_steps", "layer_id", "max_length", "max_lines"],
-    "tar":          ["tar_alpha", "tar_lr", "tar_epochs", "max_length", "max_lines"],
-    "wt_dist":      ["epochs", "lr", "batch_size", "wt_noise_std", "max_length", "max_lines"],
-    "wt_dist_reg":  ["epochs", "lr", "batch_size", "wt_reg_lambda", "max_length", "max_lines"],
-}
-
-# Short abbreviations for folder name suffixes
-PARAM_ABBREV: dict[str, str] = {
-    "epochs": "ep",
-    "lr": "lr",
-    "batch_size": "bs",
-    "max_length": "mle",
-    "max_lines": "mli",
-    "retain_weight": "rw",
-    "forget_weight": "fw",
-    "beta": "b",
-    "alpha": "rtc",
-    "steering_coeff": "rmc",
-    "layer_id": "ly",
-    "lat_eps": "le",
-    "lat_steps": "ls",
-    "tar_alpha": "ta",
-    "tar_lr": "tlr",
-    "tar_epochs": "tep",
-    "wt_noise_std": "wn",
-    "wt_reg_lambda": "wr",
-}
-
+from utils import METHOD_PARAMS, PARAM_ABBREV
 
 def save_training_config(args, outdir):
     """Save a training_config.yaml alongside the model with all reproducibility info."""
@@ -1523,38 +1655,14 @@ def save_training_config(args, outdir):
     }
     for param in METHOD_PARAMS[args.method]:
         config[param] = getattr(args, param)
+    config["norm_reg_lambda"] = getattr(args, "norm_reg_lambda", 0.0)
     os.makedirs(outdir, exist_ok=True)
     with open(os.path.join(outdir, "training_config.yaml"), "w") as f:
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
     print(f"[unlearn] Training config saved to {outdir}/training_config.yaml")
 
 
-def build_outdir(args) -> str:
-    """Build the output directory path from the method and its relevant parameters."""
-    method = args.method
-
-    # Build parameter suffix from all relevant params for this method
-    parts = []
-    for param in METHOD_PARAMS[method]:
-        abbrev = PARAM_ABBREV[param]
-        value = getattr(args, param)
-        # Use effective batch size for batch_size parameter
-        if param == "batch_size" and hasattr(args, "grad_accum_steps"):
-            value = value * args.grad_accum_steps
-        # layer_id is a string like "5,6,7" — use dashes for folder safety
-        elif param == "layer_id":
-            value = str(value).replace(",", "-")
-        parts.append(f"{abbrev}{value}")
-
-    suffix = "_".join(parts)
-
-    # Append optimizer suffix when non-default, so the name is unique and
-    # visible in local folders, W&B run names, and HuggingFace repo names.
-    optimizer = getattr(args, "optimizer", "adamw")
-    if optimizer != "adamw":
-        suffix = f"{suffix}_opt{optimizer}"
-
-    return model_outdir(args.model, root="unlearned_models", suffix=f"{method}__{suffix}")
+from utils import build_outdir
 
 
 
@@ -1621,6 +1729,10 @@ def main():
                         help="Std of Gaussian noise for Weight Distortion (wt_dist)")
     parser.add_argument("--wt-reg-lambda", type=float, default=0.1,
                         help="Regularizer weight for Weight Dist Reg (wt_dist_reg)")
+    parser.add_argument("--norm-reg-lambda", type=float, default=0.0,
+                        help="Activation-norm regularisation weight (0 = disabled). "
+                             "When > 0, penalises per-layer L2 norm deviations from "
+                             "the base model. Can be combined with any method.")
     parser.add_argument("--eval-split", type=float, default=0.1,
                         help="Fraction of data to hold out for evaluation (0 to disable)")
     parser.add_argument(
@@ -1691,7 +1803,9 @@ def main():
 
     # ---- W&B ----
     from utils import init_wandb, finish_wandb
-    run = init_wandb("unlearn", args, method=args.method)
+    extra_tags = ["norm_regularized"] if args.norm_reg_lambda > 0 else []
+    run = init_wandb("unlearn", args, method=args.method, run_type="unlearn",
+                     extra_tags=extra_tags)
 
     # Log method-specific hyperparameters as a dedicated config group
     if run is not None:
@@ -1708,6 +1822,7 @@ def main():
             "eval_interval": args.eval_interval,
             "forget_data": args.forget_data,
             "retain_data": args.retain_data,
+            "norm_reg_lambda": args.norm_reg_lambda,
         }
         for param in METHOD_PARAMS[args.method]:
             hyperparameters[param] = getattr(args, param)
@@ -1950,6 +2065,16 @@ def main():
 
         model.train()
 
+    # ---- Activation-norm regularisation: compute reference norms ----
+    norm_reg_target_norms: list[float] | None = None
+    if args.norm_reg_lambda > 0:
+        print(f"[unlearn] NORM_REG: computing reference activation norms (λ={args.norm_reg_lambda})...")
+        norm_reg_target_norms = compute_reference_norms(
+            model, forget_batches, device, n_batches=min(n_steps, len(forget_batches)),
+        )
+        print(f"[unlearn] NORM_REG: reference norms for {len(norm_reg_target_norms)} layers "
+              f"(range [{min(norm_reg_target_norms):.2f}, {max(norm_reg_target_norms):.2f}])")
+
     # ---- Weight Distortion: add Gaussian noise to all parameters ----
     if args.method == "wt_dist":
         print(f"[unlearn] WT_DIST: adding Gaussian noise (std={args.wt_noise_std}) to all parameters...")
@@ -2127,6 +2252,7 @@ def main():
         forget_act_cache=forget_act_cache,
         retain_act_cache=retain_act_cache,
         layer_ids=layer_ids,
+        norm_reg_target_norms=norm_reg_target_norms,
     )
 
     # Force n_gpu=1: batches are pre-made by make_batches(), so we never want

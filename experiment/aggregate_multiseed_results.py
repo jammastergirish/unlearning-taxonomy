@@ -67,24 +67,37 @@ def aggregate_csv_files(csv_paths: List[str], output_path: str) -> None:
         return
 
     # Combine dataframes, keeping only common columns
-    combined_df = dfs[0][list(common_columns)].copy()
+    common_col_list = sorted(common_columns)
+    trimmed_dfs = [df[common_col_list] for df in dfs]
 
     # Identify numeric columns for aggregation
-    numeric_columns = combined_df.select_dtypes(include=[np.number]).columns
-    non_numeric_columns = [col for col in common_columns if col not in numeric_columns]
+    numeric_columns = trimmed_dfs[0].select_dtypes(include=[np.number]).columns.tolist()
+    non_numeric_columns = [col for col in common_col_list if col not in numeric_columns]
 
-    # For numeric columns, compute mean and std across seeds
-    result_df = combined_df[non_numeric_columns].copy() if non_numeric_columns else pd.DataFrame()
-
-    for col in numeric_columns:
-        values = np.array([df[col].values for df in dfs])  # Shape: (n_seeds, n_rows)
-
-        # Compute mean and std across seeds (axis=0)
-        mean_vals = np.mean(values, axis=0)
-        std_vals = np.std(values, axis=0, ddof=1) if len(values) > 1 else np.zeros_like(mean_vals)
-
-        result_df[col] = mean_vals
-        result_df[f"{col}_std"] = std_vals
+    # If row counts differ across seeds (e.g. random sampling picks different
+    # matrices), align on shared non-numeric key columns before aggregating.
+    row_counts = [len(df) for df in trimmed_dfs]
+    if len(set(row_counts)) > 1 and non_numeric_columns:
+        print(f"  Row counts differ across seeds ({row_counts}); aligning on {non_numeric_columns}")
+        merged = trimmed_dfs[0]
+        for i, df in enumerate(trimmed_dfs[1:], start=1):
+            merged = merged.merge(df, on=non_numeric_columns, suffixes=("", f"__seed{i}"))
+        # Collect per-seed values for each numeric column
+        result_df = merged[non_numeric_columns].copy()
+        for col in numeric_columns:
+            seed_cols = [col] + [c for c in merged.columns if c.startswith(f"{col}__seed")]
+            vals = merged[seed_cols].values  # (n_rows, n_seeds)
+            result_df[col] = np.mean(vals, axis=1)
+            result_df[f"{col}_std"] = np.std(vals, axis=1, ddof=1) if vals.shape[1] > 1 else 0.0
+    else:
+        # Row counts match — original fast path
+        result_df = trimmed_dfs[0][non_numeric_columns].copy() if non_numeric_columns else pd.DataFrame()
+        for col in numeric_columns:
+            values = np.array([df[col].values for df in trimmed_dfs])  # (n_seeds, n_rows)
+            mean_vals = np.mean(values, axis=0)
+            std_vals = np.std(values, axis=0, ddof=1) if len(values) > 1 else np.zeros_like(mean_vals)
+            result_df[col] = mean_vals
+            result_df[f"{col}_std"] = std_vals
 
     # Save aggregated results
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -319,7 +332,7 @@ def plot_consolidated_wmdp_lens(
         plt.suptitle(title, fontsize=11)
         plt.tight_layout()
         out_png = os.path.join(plot_outdir, "wmdp_lens_analysis.png")
-        plt.savefig(out_png, dpi=150)
+        plt.savefig(out_png, dpi=300)
         plt.close()
         print(f"[aggregate] ✓ Consolidated wmdp_lens plot written to {out_png}")
 

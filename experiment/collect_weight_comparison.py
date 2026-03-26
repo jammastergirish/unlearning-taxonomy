@@ -291,7 +291,7 @@ def plot_weight_comparison(per_matrix_csv: str, outdir: str, title: str = None,
     _subtitle = f"\n{model_a.split('/')[-1]} → {model_b.split('/')[-1]}" if model_a else ""
     fig.suptitle((title or "Layer locality — relative Frobenius norm") + _subtitle, fontsize=14)
     fig.tight_layout()
-    fig.savefig(os.path.join(outdir, "relative_frobenius.png"))
+    fig.savefig(os.path.join(outdir, "relative_frobenius.png"), dpi=300)
     plt.close(fig)
     written.append(os.path.join(outdir, "relative_frobenius.png"))
 
@@ -312,7 +312,7 @@ def plot_weight_comparison(per_matrix_csv: str, outdir: str, title: str = None,
         ax.grid(alpha=0.3)
     fig.suptitle((title or "Absolute Frobenius norm — baseline vs unlearned") + _subtitle, fontsize=14)
     fig.tight_layout()
-    fig.savefig(os.path.join(outdir, "absolute_frobenius.png"))
+    fig.savefig(os.path.join(outdir, "absolute_frobenius.png"), dpi=300)
     plt.close(fig)
     written.append(os.path.join(outdir, "absolute_frobenius.png"))
 
@@ -328,7 +328,7 @@ def plot_weight_comparison(per_matrix_csv: str, outdir: str, title: str = None,
         ax.grid(alpha=0.3)
     fig.suptitle((title or "Relative stable rank of ΔW") + _subtitle, fontsize=14)
     fig.tight_layout()
-    fig.savefig(os.path.join(outdir, "stable_rank_deltaW.png"))
+    fig.savefig(os.path.join(outdir, "stable_rank_deltaW.png"), dpi=300)
     plt.close(fig)
     written.append(os.path.join(outdir, "stable_rank_deltaW.png"))
 
@@ -347,7 +347,7 @@ def plot_weight_comparison(per_matrix_csv: str, outdir: str, title: str = None,
         ax.grid(alpha=0.3)
     fig.suptitle((title or "Absolute stable rank — baseline vs unlearned") + _subtitle, fontsize=14)
     fig.tight_layout()
-    fig.savefig(os.path.join(outdir, "absolute_stable_rank.png"))
+    fig.savefig(os.path.join(outdir, "absolute_stable_rank.png"), dpi=300)
     plt.close(fig)
     written.append(os.path.join(outdir, "absolute_stable_rank.png"))
 
@@ -363,7 +363,7 @@ def plot_weight_comparison(per_matrix_csv: str, outdir: str, title: str = None,
         ax.grid(alpha=0.3)
     fig.suptitle((title or "Relative spectral norm of ΔW") + _subtitle, fontsize=14)
     fig.tight_layout()
-    fig.savefig(os.path.join(outdir, "relative_spectral_norm.png"))
+    fig.savefig(os.path.join(outdir, "relative_spectral_norm.png"), dpi=300)
     plt.close(fig)
     written.append(os.path.join(outdir, "relative_spectral_norm.png"))
 
@@ -382,7 +382,7 @@ def plot_weight_comparison(per_matrix_csv: str, outdir: str, title: str = None,
         ax.grid(alpha=0.3)
     fig.suptitle((title or "Absolute spectral norm — baseline vs unlearned") + _subtitle, fontsize=14)
     fig.tight_layout()
-    fig.savefig(os.path.join(outdir, "absolute_spectral_norm.png"))
+    fig.savefig(os.path.join(outdir, "absolute_spectral_norm.png"), dpi=300)
     plt.close(fig)
     written.append(os.path.join(outdir, "absolute_spectral_norm.png"))
 
@@ -399,7 +399,7 @@ def plot_weight_comparison(per_matrix_csv: str, outdir: str, title: str = None,
             ax.grid(alpha=0.3)
         fig.suptitle((title or "Edit dimensionality — empirical rank") + _subtitle, fontsize=14)
         fig.tight_layout()
-        fig.savefig(os.path.join(outdir, "empirical_rank.png"))
+        fig.savefig(os.path.join(outdir, "empirical_rank.png"), dpi=300)
         plt.close(fig)
         written.append(os.path.join(outdir, "empirical_rank.png"))
 

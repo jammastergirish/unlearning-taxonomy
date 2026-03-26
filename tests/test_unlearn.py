@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 from types import SimpleNamespace
 import pytest
 
-from unlearn import build_outdir, METHOD_PARAMS, PARAM_ABBREV
+from utils import build_outdir, METHOD_PARAMS, PARAM_ABBREV
 
 
 # ---------------------------------------------------------------------------

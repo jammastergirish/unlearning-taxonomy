@@ -372,7 +372,7 @@ def plot_lipschitzness_analysis(
 
     plt.suptitle(title or "Local Lipschitzness Analysis")
     plt.tight_layout()
-    plt.savefig(os.path.join(outdir, "lipschitzness_analysis.png"), dpi=150)
+    plt.savefig(os.path.join(outdir, "lipschitzness_analysis.png"), dpi=300)
     plt.close()
 
 

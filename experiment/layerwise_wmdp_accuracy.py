@@ -337,7 +337,7 @@ def plot_wmdp_lens_results(
         default_title = f"{model_name}\n{default_title}"
     plt.suptitle(title or default_title, fontsize=11)
     plt.tight_layout()
-    plt.savefig(os.path.join(outdir, "wmdp_lens_analysis.png"), dpi=150)
+    plt.savefig(os.path.join(outdir, "wmdp_lens_analysis.png"), dpi=300)
     plt.close()
 
 

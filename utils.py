@@ -71,6 +71,77 @@ def comparison_outdir(model_a: str, model_b: str, root: str = "outputs", suffix:
     return os.path.join(*parts)
 
 
+# --- Unlearning output directory logic ---
+# Moved here from unlearn/unlearn.py so that shell scripts can compute
+# output paths without importing unlearn.py (which pulls in tqdm,
+# transformers, etc.).
+
+METHOD_PARAMS: dict[str, list[str]] = {
+    "ga_simple":    ["epochs", "lr", "batch_size", "max_length", "max_lines"],
+    "ga":           ["epochs", "lr", "batch_size", "retain_weight", "max_length", "max_lines"],
+    "grad_diff":    ["epochs", "lr", "batch_size", "forget_weight", "max_length", "max_lines"],
+    "dpo":          ["epochs", "lr", "batch_size", "beta", "max_length", "max_lines"],
+    "npo":          ["epochs", "lr", "batch_size", "beta", "retain_weight", "max_length", "max_lines"],
+    "simnpo":       ["epochs", "lr", "batch_size", "beta", "retain_weight", "max_length", "max_lines"],
+    "rmu":          ["epochs", "lr", "batch_size", "alpha", "steering_coeff", "layer_id", "max_length", "max_lines"],
+    "cb":           ["epochs", "lr", "batch_size", "alpha", "steering_coeff", "layer_id", "max_length", "max_lines"],
+    "lat":          ["epochs", "lr", "batch_size", "lat_eps", "lat_steps", "retain_weight", "layer_id", "max_length", "max_lines"],
+    "cb_lat":       ["epochs", "lr", "batch_size", "alpha", "steering_coeff", "lat_eps", "lat_steps", "layer_id", "max_length", "max_lines"],
+    "tar":          ["tar_alpha", "tar_lr", "tar_epochs", "max_length", "max_lines"],
+    "wt_dist":      ["epochs", "lr", "batch_size", "wt_noise_std", "max_length", "max_lines"],
+    "wt_dist_reg":  ["epochs", "lr", "batch_size", "wt_reg_lambda", "max_length", "max_lines"],
+}
+
+PARAM_ABBREV: dict[str, str] = {
+    "epochs": "ep",
+    "lr": "lr",
+    "batch_size": "bs",
+    "max_length": "mle",
+    "max_lines": "mli",
+    "retain_weight": "rw",
+    "forget_weight": "fw",
+    "beta": "b",
+    "alpha": "a",
+    "steering_coeff": "sc",
+    "layer_id": "ly",
+    "lat_eps": "le",
+    "lat_steps": "ls",
+    "tar_alpha": "ta",
+    "tar_lr": "tlr",
+    "tar_epochs": "tep",
+    "wt_noise_std": "wn",
+    "wt_reg_lambda": "wr",
+    "norm_reg_lambda": "nrl",
+}
+
+
+def build_outdir(args) -> str:
+    """Build the unlearned-model output directory from method and its relevant parameters."""
+    method = args.method
+
+    parts = []
+    for param in METHOD_PARAMS[method]:
+        abbrev = PARAM_ABBREV[param]
+        value = getattr(args, param)
+        if param == "batch_size" and hasattr(args, "grad_accum_steps"):
+            value = value * args.grad_accum_steps
+        elif param == "layer_id":
+            value = str(value).replace(",", "-")
+        parts.append(f"{abbrev}{value}")
+
+    suffix = "_".join(parts)
+
+    nrl = getattr(args, "norm_reg_lambda", 0.0)
+    if nrl > 0:
+        suffix = f"{suffix}_nrl{nrl}"
+
+    optimizer = getattr(args, "optimizer", "adamw")
+    if optimizer != "adamw":
+        suffix = f"{suffix}_opt{optimizer}"
+
+    return model_outdir(args.model, root="unlearned_models", suffix=f"{method}__{suffix}")
+
+
 def load_dotenv(path: str = None):
     """Load .env file into environment. No external dependencies needed."""
     if path is None:
@@ -503,19 +574,21 @@ def write_csv(path: str, rows: List[Dict], fieldnames: List[str]) -> None:
 
 # --- Weights & Biases helpers ---
 def _derive_run_name(script_name: str, args) -> str:
-    """Derive a descriptive W&B run name from args.outdir (last 2 path segments)."""
+    """Derive a descriptive W&B run name from args.outdir.
+
+    Keeps all path segments after stripping common root prefixes so that
+    run names include the model pair and are unambiguous across comparisons.
+    E.g. 'outputs/A__to__B/null_space_analysis/seed_42'
+      -> 'A__to__B/null_space_analysis/seed_42'
+    """
     outdir = getattr(args, "outdir", None)
     if not outdir:
         return script_name
-    # Normalise and grab last 2 non-empty components
     parts = [p for p in outdir.replace("\\", "/").split("/") if p]
-    # Strip common root prefixes like "outputs" or "unlearned_models"
     while parts and parts[0] in ("outputs", "unlearned_models", "plots"):
         parts = parts[1:]
-    if len(parts) >= 2:
-        return "/".join(parts[-2:])
     if parts:
-        return parts[-1]
+        return "/".join(parts)
     return script_name
 
 
@@ -537,7 +610,9 @@ def infer_method_from_model_name(model_name: str) -> str | None:
     return m.group(1) if m else None
 
 
-def init_wandb(script_name: str, args, project: str = "cambridge_era", method: str | None = None, **kw):
+def init_wandb(script_name: str, args, project: str = "cambridge_era",
+               method: str | None = None, run_type: str = "experiment",
+               extra_tags: list[str] | None = None, **kw):
     """Initialise a W&B run, logging to project "cambridge_era" by default.
 
     Silently no-ops if:
@@ -548,6 +623,9 @@ def init_wandb(script_name: str, args, project: str = "cambridge_era", method: s
     Args:
         method: If provided (e.g. "ga", "rmu"), a "method:<name>" tag is added
                 to the run so runs can be filtered by algorithm in the W&B UI.
+        run_type: The type of run (e.g. "unlearn", "experiment"). Added as a
+                "run_type:<value>" tag. Defaults to "experiment".
+        extra_tags: Additional tags to attach to the run.
     """
     try:
         import wandb
@@ -558,9 +636,11 @@ def init_wandb(script_name: str, args, project: str = "cambridge_era", method: s
         return None
     run_name = _derive_run_name(script_name, args)
     group = os.environ.get("WANDB_RUN_GROUP", None)
-    tags = [script_name]
+    tags = [script_name, f"run_type:{run_type}"]
     if method:
         tags.append(f"method:{method}")
+    if extra_tags:
+        tags.extend(extra_tags)
     optimizer = getattr(args, "optimizer", None)
     if optimizer:
         tags.append(f"optimizer:{optimizer}")

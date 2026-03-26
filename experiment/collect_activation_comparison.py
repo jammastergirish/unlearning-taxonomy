@@ -338,7 +338,7 @@ def plot_activation_comparison(csv_path: str, outdir: str, title: str = None,
         suffix = " (mean ± 1σ)" if has_std else ""
         fig.suptitle((title or "") + suffix, fontsize=11)
         plt.tight_layout()
-        plt.savefig(os.path.join(outdir, f"activation_norms_{split}.png"))
+        plt.savefig(os.path.join(outdir, f"activation_norms_{split}.png"), dpi=300)
         plt.close()
 
         # ------------------------------------------------------------------
@@ -364,7 +364,7 @@ def plot_activation_comparison(csv_path: str, outdir: str, title: str = None,
 
         fig.suptitle((title or "") + suffix, fontsize=11)
         plt.tight_layout()
-        plt.savefig(os.path.join(outdir, f"activation_diffs_{split}.png"))
+        plt.savefig(os.path.join(outdir, f"activation_diffs_{split}.png"), dpi=300)
         plt.close()
 
     print(f"[collect_activation_comparison] ✓ All plots written to {outdir}")
