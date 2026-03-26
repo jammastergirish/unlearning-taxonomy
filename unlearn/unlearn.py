@@ -1735,7 +1735,8 @@ def main():
     # ---- W&B ----
     from utils import init_wandb, finish_wandb
     extra_tags = ["norm_regularized"] if args.norm_reg_lambda > 0 else []
-    run = init_wandb("unlearn", args, method=args.method, extra_tags=extra_tags)
+    run = init_wandb("unlearn", args, method=args.method, run_type="unlearn",
+                     extra_tags=extra_tags)
 
     # Log method-specific hyperparameters as a dedicated config group
     if run is not None:

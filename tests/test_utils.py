@@ -473,6 +473,24 @@ class TestInitWandb:
                 init_wandb("my_analysis_script", self._args())
         assert "my_analysis_script" in mock_wandb.init.call_args.kwargs["tags"]
 
+    def test_default_run_type_is_experiment(self):
+        """Without an explicit run_type, the tag 'run_type:experiment' must be present."""
+        mock_wandb = MagicMock()
+        with patch.dict("os.environ", {"WANDB_API_KEY": "fake-key"}, clear=False):
+            with patch.dict("sys.modules", {"wandb": mock_wandb}):
+                init_wandb("test_script", self._args())
+        assert "run_type:experiment" in mock_wandb.init.call_args.kwargs["tags"]
+
+    def test_run_type_unlearn(self):
+        """Passing run_type='unlearn' must add 'run_type:unlearn' to the tags."""
+        mock_wandb = MagicMock()
+        with patch.dict("os.environ", {"WANDB_API_KEY": "fake-key"}, clear=False):
+            with patch.dict("sys.modules", {"wandb": mock_wandb}):
+                init_wandb("unlearn", self._args(), run_type="unlearn")
+        tags = mock_wandb.init.call_args.kwargs["tags"]
+        assert "run_type:unlearn" in tags
+        assert "run_type:experiment" not in tags
+
     def test_run_group_from_env(self):
         """WANDB_RUN_GROUP env var must be forwarded to wandb.init as group=."""
         mock_wandb = MagicMock()
@@ -523,7 +541,7 @@ class TestInitWandb:
         assert "method:ga" in tags
 
     def test_no_method_tag_when_method_is_none(self):
-        """When method= is omitted the tags list must only contain the script name."""
+        """When method= is omitted no method: tag must be present."""
         mock_wandb = MagicMock()
         with patch.dict("os.environ", {"WANDB_API_KEY": "fake-key"}, clear=False):
             with patch.dict("sys.modules", {"wandb": mock_wandb}):
