@@ -11,7 +11,7 @@
 #
 # [tool.uv.sources]
 # torch = [
-#   { index = "pytorch-cu124" },
+#   { index = "pytorch-cu124", marker = "sys_platform == 'linux'" },
 # ]
 #
 # [[tool.uv.index]]
